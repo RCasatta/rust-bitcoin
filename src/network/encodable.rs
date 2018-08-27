@@ -181,6 +181,8 @@ impl_array!(8);
 impl_array!(12);
 impl_array!(16);
 impl_array!(32);
+impl_array!(33);
+
 
 impl<S: SimpleEncoder, T: ConsensusEncodable<S>> ConsensusEncodable<S> for [T] {
     #[inline]
@@ -203,9 +205,11 @@ impl<D: SimpleDecoder, T: ConsensusDecodable<D>> ConsensusDecodable<D> for Vec<T
     #[inline]
     fn consensus_decode(d: &mut D) -> Result<Vec<T>, serialize::Error> {
         let VarInt(len): VarInt = ConsensusDecodable::consensus_decode(d)?;
+        //println!("vec len {}", len);
         let byte_size = (len as usize)
                             .checked_mul(mem::size_of::<T>())
                             .ok_or(serialize::Error::ParseFailed("Invalid length"))?;
+
         if byte_size > MAX_VEC_SIZE {
             return Err(serialize::Error::OversizedVectorAllocation { requested: byte_size, max: MAX_VEC_SIZE })
         }
@@ -225,6 +229,7 @@ impl<D: SimpleDecoder, T: ConsensusDecodable<D>> ConsensusDecodable<D> for Box<[
     fn consensus_decode(d: &mut D) -> Result<Box<[T]>, serialize::Error> {
         let VarInt(len): VarInt = ConsensusDecodable::consensus_decode(d)?;
         let len = len as usize;
+        //println!("box len {:?}",len);
         if len > MAX_VEC_SIZE {
             return Err(serialize::Error::OversizedVectorAllocation { requested: len, max: MAX_VEC_SIZE })
         }
@@ -508,6 +513,7 @@ mod tests {
         assert_eq!(deserialize(&[0xA0u8, 0x0D, 0xAB, 0xCD, 0x99, 0, 0, 0x99]).ok(), Some(-0x66ffff663254f260i64));
         let failurei64: Result<i64, _> = deserialize(&[1u8, 2, 3, 4, 5, 6, 7]);
         assert!(failurei64.is_err());
+
     }
 
     #[test]

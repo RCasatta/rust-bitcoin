@@ -342,7 +342,7 @@ impl Script {
         self.0[24] == opcodes::All::OP_CHECKSIG as u8
     }
 
-    /// Checks whether a script pubkey is a p2pkh output
+    /// Checks whether a script pubkey is a p2pk output
     #[inline]
     pub fn is_p2pk(&self) -> bool {
         self.0.len() == 67 &&
@@ -692,12 +692,32 @@ impl<D: SimpleDecoder> ConsensusDecodable<D> for Script {
 #[cfg(test)]
 mod test {
     use hex::decode as hex_decode;
+    use hex::encode as hex_encode;
+
 
     use super::*;
     use super::build_scriptint;
 
     use network::serialize::{deserialize, serialize};
     use blockdata::opcodes;
+    use util::base58;
+
+    #[test]
+    fn decode_script() {
+        let hex_script = hex_decode("1976a914824143858a92d5f58f98ba7b67c57db2f810735088ac").unwrap();
+        let script: Result<Script, _> = deserialize(&hex_script);
+        assert!(script.is_ok());
+        let script = script.unwrap();
+        let script_bytes = script.as_bytes();
+        let hash160 = Hash160::from_data(script_bytes);
+
+        let check = base58::from("2dmJUR4ZC6G8KbHZtgxBRhsxoB98XeEuNzp");
+        assert!(check.is_ok());
+        let check = check.unwrap();
+
+        println!("{:?}", hash160);
+        println!("{:?}", hex_encode(check));
+    }
 
     #[test]
     fn script() {
