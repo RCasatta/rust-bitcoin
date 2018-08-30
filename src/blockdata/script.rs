@@ -701,21 +701,34 @@ mod test {
     use network::serialize::{deserialize, serialize};
     use blockdata::opcodes;
     use util::base58;
+    use util::hash::Sha256dHash;
 
     #[test]
     fn decode_script() {
-        let hex_script = hex_decode("1976a914824143858a92d5f58f98ba7b67c57db2f810735088ac").unwrap();
+
+        let mut sha2 = Sha256::new();
+        let mut ret = [0u8;32];
+        sha2.input(&hex_decode("76a9143de3eac5c48255885dcebb6a6f00b49bcc5b96d088ac").unwrap());
+        sha2.result(&mut ret);
+        ret.reverse();
+        println!("hash single {:?}", hex_encode(ret));
+
+        //let hash: Sha256dHash = Sha256dHash::from_data(&hex_decode("76a9143de3eac5c48255885dcebb6a6f00b49bcc5b96d088ac").unwrap());
+        let hash = Hash160::from_data(&hex_decode("51").unwrap());
+        println!("hash {:?}", hash);
+
+
+        let hex_script = hex_decode("76a9143de3eac5c48255885dcebb6a6f00b49bcc5b96d088ac").unwrap();
         let script: Result<Script, _> = deserialize(&hex_script);
         assert!(script.is_ok());
         let script = script.unwrap();
         let script_bytes = script.as_bytes();
-        let hash160 = Hash160::from_data(script_bytes);
+
 
         let check = base58::from("2dmJUR4ZC6G8KbHZtgxBRhsxoB98XeEuNzp");
         assert!(check.is_ok());
         let check = check.unwrap();
 
-        println!("{:?}", hash160);
         println!("{:?}", hex_encode(check));
     }
 
