@@ -33,6 +33,8 @@ use util::hash::Sha256dHash;
 use blockdata::script::Script;
 use network::serialize::{self, serialize, BitcoinHash, SimpleEncoder, SimpleDecoder};
 use network::encodable::{ConsensusEncodable, ConsensusDecodable, VarInt};
+use rand::distributions::Distribution;
+use rand::distributions::Standard;
 
 /// A reference to a transaction output
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -43,6 +45,15 @@ pub struct OutPoint {
     pub vout: u32,
 }
 serde_struct_impl!(OutPoint, txid, vout);
+
+impl Distribution<OutPoint> for Standard {
+    fn sample<R: ::rand::Rng + ?Sized>(&self, rng: &mut R) -> OutPoint {
+        OutPoint {
+            txid: rng.gen(),
+            vout: rng.gen(),   //TODO generate particular case more frequently
+        }
+    }
+}
 
 impl OutPoint {
     /// Creates a "null" `OutPoint`.
@@ -501,6 +512,7 @@ mod tests {
     use network::serialize::deserialize;
     use util::hash::Sha256dHash;
     use util::misc::hex_bytes;
+    use blockdata::transaction::OutPoint;
 
     #[test]
     fn test_txin() {
@@ -946,6 +958,16 @@ mod tests {
         run_test_sighash("8f53639901f1d643e01fc631f632b7a16e831d846a0184cdcda289b8fa7767f0c292eb221a00000000046a53abacffffffff037a2daa01000000000553ac6a6a51eac349020000000005ac526552638421b3040000000007006a005100ac63048a1492", "ac65", 0, 1033685559, "da86c260d42a692358f46893d6f91563985d86eeb9ea9e21cd38c2d8ffcfcc4d");
         run_test_sighash("b3cad3a7041c2c17d90a2cd994f6c37307753fa3635e9ef05ab8b1ff121ca11239a0902e700300000009ab635300006aac5163ffffffffcec91722c7468156dce4664f3c783afef147f0e6f80739c83b5f09d5a09a57040200000004516a6552ffffffff969d1c6daf8ef53a70b7cdf1b4102fb3240055a8eaeaed2489617cd84cfd56cf020000000352ab53ffffffff46598b6579494a77b593681c33422a99559b9993d77ca2fa97833508b0c169f80200000009655300655365516351ffffffff04d7ddf800000000000853536a65ac6351ab09f3420300000000056aab65abac33589d04000000000952656a65655151acac944d6f0400000000006a8004ba", "005165", 1, 1035865506, "fe1dc9e8554deecf8f50c417c670b839cc9d650722ebaaf36572418756075d58");
         run_test_sighash("cf781855040a755f5ba85eef93837236b34a5d3daeb2dbbdcf58bb811828d806ed05754ab8010000000351ac53ffffffffda1e264727cf55c67f06ebcc56dfe7fa12ac2a994fecd0180ce09ee15c480f7d00000000096351516a51acac00ab53dd49ff9f334befd6d6f87f1a832cddfd826a90b78fd8cf19a52cb8287788af94e939d6020000000700525251ac526310d54a7e8900ed633f0f6f0841145aae7ee0cbbb1e2a0cae724ee4558dbabfdc58ba6855010000000552536a53abfd1b101102c51f910500000000096300656a525252656a300bee010000000009ac52005263635151abe19235c9", "53005365", 2, 1422854188, "d5981bd4467817c1330da72ddb8760d6c2556cd809264b2d85e6d274609fc3a3");
+    }
+
+    #[test]
+    fn test_transaction_random () {
+        use rand;
+        use rand::Rng;
+        let a : Transaction =  rand::thread_rng().gen();
+        println!("{:?}",a);
+        let a : OutPoint =  rand::thread_rng().gen();
+        println!("{:?}",a);
     }
 
     #[test]

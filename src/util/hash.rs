@@ -34,6 +34,8 @@ use util::uint::Uint256;
 
 #[cfg(feature="fuzztarget")]      use util::sha2::Sha256;
 #[cfg(not(feature="fuzztarget"))] use crypto::sha2::Sha256;
+use rand::distributions::Distribution;
+use rand::distributions::Standard;
 
 /// Hex deserialization error
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -66,6 +68,14 @@ impl error::Error for HexError {
 /// A Bitcoin hash, 32-bytes, computed from x as SHA256(SHA256(x))
 pub struct Sha256dHash([u8; 32]);
 impl_array_newtype!(Sha256dHash, u8, 32);
+
+impl Distribution<Sha256dHash> for Standard {
+    fn sample<R: ::rand::Rng + ?Sized>(&self, rng: &mut R) -> Sha256dHash {
+        let mut buf = [0u8; 32];
+        rng.fill(&mut buf);
+        Sha256dHash(buf)
+    }
+}
 
 /// An object that allows serializing data into a sha256d
 pub struct Sha256dEncoder(Sha256);

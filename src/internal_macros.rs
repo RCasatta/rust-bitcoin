@@ -170,12 +170,13 @@ macro_rules! impl_array_newtype {
             }
         }
 
-        impl ::rand::Rand for $thing {
-            #[inline]
-            fn rand<R: ::rand::Rng>(r: &mut R) -> $thing {
-                $thing(::rand::Rand::rand(r))
+/*
+        impl ::rand::distributions::Distribution<$thing> for ::rand::distributions::Standard {
+            fn sample<R: ::rand::Rng + ?Sized>(&self, rng: &mut R) -> $thing {
+                rng.gen()
             }
         }
+*/
     }
 }
 
