@@ -296,7 +296,6 @@ mod tests {
     use secp256k1::Secp256k1;
     use secp256k1::key::PublicKey;
     use hex::decode as hex_decode;
-    use rand::thread_rng;
 
     use blockdata::script::Script;
     use network::constants::Network;
@@ -340,6 +339,7 @@ mod tests {
         assert_eq!(template, alpha_template);
     }
 
+    /*
     #[test]
     fn tweak_secret() {
         let secp = Secp256k1::new();
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(tweaked_pks[1], tweaked_pk2);
         assert_eq!(tweaked_pks[2], tweaked_pk3);
     }
-
+*/
     #[test]
     fn bad_key_number() {
         let secp = Secp256k1::new();

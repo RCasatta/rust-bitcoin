@@ -45,6 +45,7 @@ use util::hash::Hash160;
 /// A Bitcoin script
 pub struct Script(Box<[u8]>);
 
+
 impl fmt::Debug for Script {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut index = 0;
