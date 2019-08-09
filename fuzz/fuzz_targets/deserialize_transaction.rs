@@ -2,26 +2,23 @@ extern crate bitcoin;
 
 fn do_test(data: &[u8]) {
     let tx_result: Result<bitcoin::blockdata::transaction::Transaction, _> = bitcoin::consensus::encode::deserialize(data);
-    match tx_result {
-        Err(_) => {},
-        Ok(mut tx) => {
-            let ser = bitcoin::consensus::encode::serialize(&tx);
-            assert_eq!(&ser[..], data);
-            let len = ser.len();
-            let calculated_weight = tx.get_weight();
-            for input in &mut tx.input {
-                input.witness = vec![];
-            }
-            let no_witness_len = bitcoin::consensus::encode::serialize(&tx).len();
-            // For 0-input transactions, `no_witness_len` will be incorrect because
-            // we serialize as segwit even after "stripping the witnesses". We need
-            // to drop two bytes (i.e. eight weight)
-            if tx.input.is_empty() {
-                assert_eq!(no_witness_len * 3 + len - 8, calculated_weight);
-            } else {
-                assert_eq!(no_witness_len * 3 + len, calculated_weight);
-            }
-        },
+    if let Ok(mut tx) = tx_result {
+        let ser = bitcoin::consensus::encode::serialize(&tx);
+        assert_eq!(&ser[..], data);
+        let len = ser.len();
+        let calculated_weight = tx.get_weight();
+        for input in &mut tx.input {
+            input.witness = vec![];
+        }
+        let no_witness_len = bitcoin::consensus::encode::serialize(&tx).len();
+        // For 0-input transactions, `no_witness_len` will be incorrect because
+        // we serialize as segwit even after "stripping the witnesses". We need
+        // to drop two bytes (i.e. eight weight)
+        if tx.input.is_empty() {
+            assert_eq!(no_witness_len * 3 + len - 8, calculated_weight);
+        } else {
+            assert_eq!(no_witness_len * 3 + len, calculated_weight);
+        }
     }
 }
 

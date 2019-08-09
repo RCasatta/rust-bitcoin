@@ -1,7 +1,11 @@
 extern crate bitcoin;
 
 fn do_test(data: &[u8]) {
-    let _: Result<bitcoin::blockdata::block::Block, _>= bitcoin::consensus::encode::deserialize(data);
+    let block: Result<bitcoin::blockdata::block::Block, _>= bitcoin::consensus::encode::deserialize(data);
+    if let Ok(block) = block {
+        let ser = bitcoin::consensus::encode::serialize(&block);
+        assert_eq!(&ser[..], data);
+    }
 }
 
 #[cfg(feature = "afl")]
