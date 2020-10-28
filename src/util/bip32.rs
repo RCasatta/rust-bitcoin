@@ -16,18 +16,20 @@
 //! Implementation of BIP32 hierarchical deterministic wallets, as defined
 //! at https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
 
+#[cfg(feature = "serde")]
+use serde;
 use std::default::Default;
-use std::{error, fmt};
 use std::str::FromStr;
-#[cfg(feature = "serde")] use serde;
+use std::{error, fmt};
 
 use hash_types::XpubIdentifier;
 use hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 use secp256k1::{self, Secp256k1};
 
 use network::constants::Network;
+use std::convert::TryInto;
+use util::key::{PrivateKey, PublicKey};
 use util::{base58, endian};
-use util::key::{PublicKey, PrivateKey};
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -79,7 +81,9 @@ pub struct ExtendedPubKey {
     /// Public key
     pub public_key: PublicKey,
     /// Chain code
-    pub chain_code: ChainCode
+    pub chain_code: ChainCode,
+    /// Keep version around for electrum
+    pub electrum_version: Option<[u8; 4]>,
 }
 serde_string_impl!(ExtendedPubKey, "a BIP-32 extended public key");
 
@@ -502,14 +506,18 @@ impl ExtendedPrivKey {
 
 impl ExtendedPubKey {
     /// Derives a public key from a private key
-    pub fn from_private<C: secp256k1::Signing>(secp: &Secp256k1<C>, sk: &ExtendedPrivKey) -> ExtendedPubKey {
+    pub fn from_private<C: secp256k1::Signing>(
+        secp: &Secp256k1<C>,
+        sk: &ExtendedPrivKey,
+    ) -> ExtendedPubKey {
         ExtendedPubKey {
             network: sk.network,
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
             public_key: PublicKey::from_private_key(secp, &sk.private_key),
-            chain_code: sk.chain_code
+            chain_code: sk.chain_code,
+            electrum_version: None,
         }
     }
 
@@ -568,7 +576,8 @@ impl ExtendedPubKey {
             parent_fingerprint: self.fingerprint(),
             child_number: i,
             public_key: pk,
-            chain_code: chain_code
+            chain_code: chain_code,
+            electrum_version: None,
         })
     }
 
@@ -670,23 +679,76 @@ impl FromStr for ExtendedPubKey {
 
         let cn_int: u32 = endian::slice_to_u32_be(&data[9..13]);
         let child_number: ChildNumber = ChildNumber::from(cn_int);
+        let electrum_xpub = match_electrum_xpub(&data[0..4]);
+        let electrum_version = if electrum_xpub.is_ok() {
+            Some(data[0..4].try_into().unwrap())
+        } else {
+            None
+        };
 
         Ok(ExtendedPubKey {
             network: if data[0..4] == [0x04u8, 0x88, 0xB2, 0x1E] {
+                // xpub
                 Network::Bitcoin
             } else if data[0..4] == [0x04u8, 0x35, 0x87, 0xCF] {
+                // tpub
                 Network::Testnet
             } else {
-                return Err(base58::Error::InvalidVersion((&data[0..4]).to_vec()));
+                electrum_xpub?.0
             },
             depth: data[4],
             parent_fingerprint: Fingerprint::from(&data[5..9]),
             child_number: child_number,
             chain_code: ChainCode::from(&data[13..45]),
-            public_key: PublicKey::from_slice(
-                             &data[45..78]).map_err(|e|
-                                 base58::Error::Other(e.to_string()))?
+            public_key: PublicKey::from_slice(&data[45..78])
+                .map_err(|e| base58::Error::Other(e.to_string()))?,
+            electrum_version,
         })
+    }
+}
+
+impl ExtendedPubKey {
+    /// Return a descriptor if this ExtendedPubKey has been imported from electrum
+    pub fn to_descriptor(&self) -> Result<String, ()> {
+        let xpub = self.to_string();
+        let electrum_version = self.electrum_version.ok_or_else(|| ())?;
+        let desc_type = match_electrum_xpub(&electrum_version).map_err(|_| ())?.1;
+        Ok(format!(
+            "{}({}/0/*)\n{}({}/1/*)",
+            desc_type, xpub, desc_type, xpub
+        ))
+    }
+}
+
+fn match_electrum_xpub(version: &[u8]) -> Result<(Network, String), base58::Error> {
+    // electrum testnet
+    // https://github.com/spesmilo/electrum/blob/928e43fc530ba5befa062db788e4e04d56324161/electrum/constants.py#L118-L124
+    //     XPUB_HEADERS = {
+    //         'standard':    0x043587cf,  # tpub
+    //         'p2wpkh-p2sh': 0x044a5262,  # upub
+    //         'p2wsh-p2sh':  0x024289ef,  # Upub
+    //         'p2wpkh':      0x045f1cf6,  # vpub
+    //         'p2wsh':       0x02575483,  # Vpub
+    //     }
+    // electrum mainnet
+    // https://github.com/spesmilo/electrum/blob/928e43fc530ba5befa062db788e4e04d56324161/electrum/constants.py#L82-L88
+    //     XPUB_HEADERS = {
+    //         'standard':    0x0488b21e,  # xpub
+    //         'p2wpkh-p2sh': 0x049d7cb2,  # ypub
+    //         'p2wsh-p2sh':  0x0295b43f,  # Ypub
+    //         'p2wpkh':      0x04b24746,  # zpub
+    //         'p2wsh':       0x02aa7ed3,  # Zpub
+    //     }
+    match version {
+        [0x04u8, 0x4a, 0x52, 0x62] => Ok((Network::Testnet, "wpkh-p2sh".to_string())), // upub
+        [0x02u8, 0x42, 0x89, 0xef] => Ok((Network::Testnet, "wsh-p2sh".to_string())),  // Upub
+        [0x04u8, 0x5f, 0x1c, 0xf6] => Ok((Network::Testnet, "wpkh".to_string())),      // vpub
+        [0x02u8, 0x57, 0x54, 0x83] => Ok((Network::Testnet, "wsh".to_string())),       // Vpub
+        [0x04u8, 0x9d, 0x7c, 0xb2] => Ok((Network::Bitcoin, "wpkh-p2sh".to_string())), // ypub
+        [0x02u8, 0x95, 0xb4, 0x3f] => Ok((Network::Bitcoin, "wsh-p2sh".to_string())),  // Ypub
+        [0x04u8, 0xb2, 0x47, 0x46] => Ok((Network::Bitcoin, "wpkh".to_string())),      // zpub
+        [0x02u8, 0xaa, 0x7e, 0xd3] => Ok((Network::Bitcoin, "wsh".to_string())),       // Zpub
+        _ => return Err(base58::Error::InvalidVersion(version.to_vec())),
     }
 }
 
