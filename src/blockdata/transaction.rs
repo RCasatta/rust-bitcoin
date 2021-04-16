@@ -24,7 +24,7 @@
 //!
 
 use std::default::Default;
-use std::{error, fmt, io, str};
+use std::{error, fmt, io, str, mem};
 
 use hashes::{self, Hash, sha256d};
 use hashes::hex::FromHex;
@@ -36,6 +36,9 @@ use blockdata::script::Script;
 use consensus::{encode, Decodable, Encodable};
 use hash_types::{SigHash, Txid, Wtxid};
 use VarInt;
+use smallvec::{smallvec, SmallVec};
+use std::io::Error;
+use consensus::encode::{MAX_VEC_SIZE, SMALLVEC_SIZE};
 
 /// A reference to a transaction output
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -261,9 +264,9 @@ pub struct Transaction {
     /// valid immediately.
     pub lock_time: u32,
     /// List of inputs
-    pub input: Vec<TxIn>,
+    pub input: SmallVec<[TxIn; SMALLVEC_SIZE]>,
     /// List of outputs
-    pub output: Vec<TxOut>,
+    pub output: SmallVec<[TxOut; SMALLVEC_SIZE]>,
 }
 
 impl Transaction {
@@ -342,19 +345,19 @@ impl Transaction {
         let mut tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,
-            input: vec![],
-            output: vec![],
+            input: smallvec![],
+            output: smallvec![],
         };
         // Add all inputs necessary..
         if anyone_can_pay {
-            tx.input = vec![TxIn {
+            tx.input = smallvec![TxIn {
                 previous_output: self.input[input_index].previous_output,
                 script_sig: script_pubkey.clone(),
                 sequence: self.input[input_index].sequence,
                 witness: vec![],
             }];
         } else {
-            tx.input = Vec::with_capacity(self.input.len());
+            tx.input = SmallVec::with_capacity(self.input.len());
             for (n, input) in self.input.iter().enumerate() {
                 tx.input.push(TxIn {
                     previous_output: input.previous_output,
@@ -374,7 +377,7 @@ impl Transaction {
                                       .map(|(n, out)| if n == input_index { out.clone() } else { TxOut::default() });
                 output_iter.collect()
             }
-            SigHashType::None => vec![],
+            SigHashType::None => smallvec![],
             _ => unreachable!()
         };
         // hash the result
@@ -534,6 +537,64 @@ impl Decodable for TxIn {
     }
 }
 
+impl Encodable for SmallVec<[TxIn; SMALLVEC_SIZE]> {
+    fn consensus_encode<W: io::Write>(&self, mut w: W) -> Result<usize, Error> {
+        let mut len = 0;
+        len += VarInt(self.len() as u64).consensus_encode(&mut w)?;
+        for c in self.iter() {
+            len += c.consensus_encode(&mut w)?;
+        }
+        Ok(len)
+    }
+}
+
+impl Decodable for SmallVec<[TxIn; SMALLVEC_SIZE]> {
+    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+        let len = VarInt::consensus_decode(&mut d)?.0;
+        let byte_size = (len as usize)
+            .checked_mul(mem::size_of::<TxIn>())
+        .ok_or(encode::Error::ParseFailed("Invalid length"))?;
+        if byte_size > MAX_VEC_SIZE {
+            return Err(encode::Error::OversizedVectorAllocation { requested: byte_size, max: MAX_VEC_SIZE })
+        }
+        let mut ret = SmallVec::with_capacity(len as usize);
+        for _ in 0..len {
+            ret.push(Decodable::consensus_decode(&mut d)?);
+        }
+        Ok(ret)
+    }
+}
+
+
+impl Encodable for SmallVec<[TxOut; SMALLVEC_SIZE]> {
+    fn consensus_encode<W: io::Write>(&self, mut w: W) -> Result<usize, Error> {
+        let mut len = 0;
+        len += VarInt(self.len() as u64).consensus_encode(&mut w)?;
+        for c in self.iter() {
+            len += c.consensus_encode(&mut w)?;
+        }
+        Ok(len)
+    }
+}
+
+impl Decodable for SmallVec<[TxOut; SMALLVEC_SIZE]> {
+    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+        let len = VarInt::consensus_decode(&mut d)?.0;
+        let byte_size = (len as usize)
+            .checked_mul(mem::size_of::<TxOut>())
+        .ok_or(encode::Error::ParseFailed("Invalid length"))?;
+        if byte_size > MAX_VEC_SIZE {
+            return Err(encode::Error::OversizedVectorAllocation { requested: byte_size, max: MAX_VEC_SIZE })
+        }
+        let mut ret = SmallVec::with_capacity(len as usize);
+        for _ in 0..len {
+            ret.push(Decodable::consensus_decode(&mut d)?);
+        }
+        Ok(ret)
+    }
+}
+
+
 impl Encodable for Transaction {
     fn consensus_encode<S: io::Write>(
         &self,
@@ -568,15 +629,25 @@ impl Encodable for Transaction {
 impl Decodable for Transaction {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = i32::consensus_decode(&mut d)?;
-        let input = Vec::<TxIn>::consensus_decode(&mut d)?;
+
+        let len = VarInt::consensus_decode(&mut d)?.0;
+
         // segwit
-        if input.is_empty() {
+        if len == 0 {
             let segwit_flag = u8::consensus_decode(&mut d)?;
             match segwit_flag {
                 // BIP144 input witnesses
                 1 => {
-                    let mut input = Vec::<TxIn>::consensus_decode(&mut d)?;
-                    let output = Vec::<TxOut>::consensus_decode(&mut d)?;
+                    let len = VarInt::consensus_decode(&mut d)?.0;
+                    let mut input = SmallVec::<[TxIn; SMALLVEC_SIZE]>::with_capacity(len as usize);
+                    for _ in 0..len {
+                        input.push(Decodable::consensus_decode(&mut d)?);
+                    }
+                    let len = VarInt::consensus_decode(&mut d)?.0;
+                    let mut output = SmallVec::<[TxOut; SMALLVEC_SIZE]>::with_capacity(len as usize);
+                    for _ in 0..len {
+                        output.push(Decodable::consensus_decode(&mut d)?);
+                    }
                     for txin in input.iter_mut() {
                         txin.witness = Decodable::consensus_decode(&mut d)?;
                     }
@@ -598,10 +669,19 @@ impl Decodable for Transaction {
             }
         // non-segwit
         } else {
+            let mut input = SmallVec::<[TxIn; SMALLVEC_SIZE]>::with_capacity(len as usize);
+            for _ in 0..len {
+                input.push(Decodable::consensus_decode(&mut d)?);
+            }
+            let len = VarInt::consensus_decode(&mut d)?.0;
+            let mut output = SmallVec::<[TxOut; SMALLVEC_SIZE]>::with_capacity(len as usize);
+            for _ in 0..len {
+                output.push(Decodable::consensus_decode(&mut d)?);
+            }
             Ok(Transaction {
                 version: version,
                 input: input,
-                output: Decodable::consensus_decode(&mut d)?,
+                output: output,
                 lock_time: Decodable::consensus_decode(d)?,
             })
         }
