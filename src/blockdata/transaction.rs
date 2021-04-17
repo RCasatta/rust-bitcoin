@@ -568,9 +568,10 @@ impl Encodable for Transaction {
 impl Decodable for Transaction {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = i32::consensus_decode(&mut d)?;
-        let input = Vec::<TxIn>::consensus_decode(&mut d)?;
+        let len = VarInt::consensus_decode(&mut d)?.0;
+
         // segwit
-        if input.is_empty() {
+        if len == 0 {
             let segwit_flag = u8::consensus_decode(&mut d)?;
             match segwit_flag {
                 // BIP144 input witnesses
@@ -598,6 +599,17 @@ impl Decodable for Transaction {
             }
         // non-segwit
         } else {
+            let byte_size = (len as usize)
+                .checked_mul(core::mem::size_of::<TxIn>())
+                .ok_or(encode::Error::ParseFailed("Invalid length"))?;
+            if byte_size > encode::MAX_VEC_SIZE {
+                return Err(encode::Error::OversizedVectorAllocation { requested: byte_size, max: encode::MAX_VEC_SIZE })
+            }
+            let mut input = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                input.push(Decodable::consensus_decode(&mut d)?);
+            }
+
             Ok(Transaction {
                 version: version,
                 input: input,
