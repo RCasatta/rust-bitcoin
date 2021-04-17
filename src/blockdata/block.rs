@@ -502,4 +502,30 @@ mod benches {
             black_box(&block);
         });
     }
+
+
+    #[bench]
+    pub fn bench_big_block_deserialize(bh: &mut Bencher) {
+        let raw_block = include_bytes!("../../00000000000000000001b56e8c411e106b02c2408f837387854d8957f808e127");
+
+        bh.iter(|| {
+            let block: Block = deserialize(&raw_block[..]).unwrap();
+            black_box(&block);
+        });
+    }
+
+    #[bench]
+    pub fn bench_big_block_serialize(bh: &mut Bencher) {
+        let raw_block = include_bytes!("../../00000000000000000001b56e8c411e106b02c2408f837387854d8957f808e127");
+
+        let block: Block = deserialize(&raw_block[..]).unwrap();
+
+        let mut data = Vec::with_capacity(raw_block.len());
+
+        bh.iter(|| {
+            let result = block.consensus_encode(&mut data);
+            black_box(&result);
+            data.clear();
+        });
+    }
 }
