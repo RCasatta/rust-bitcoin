@@ -21,7 +21,7 @@ use std::io;
 
 use blockdata::script::Script;
 use blockdata::transaction::{SigHashType, Transaction, TxOut};
-use consensus::encode::{self, serialize, Decodable};
+use consensus::{encode, serialize, ReadExt};
 use util::bip32::{ChildNumber, Fingerprint, KeySource};
 use hashes::{hash160, ripemd160, sha256, sha256d, Hash};
 use util::key::PublicKey;
@@ -100,7 +100,7 @@ impl Deserialize for KeySource {
 
         let mut d = &bytes[4..];
         while !d.is_empty() {
-            match u32::consensus_decode(&mut d) {
+            match ReadExt::read_u32(&mut d) {
                 Ok(index) => dpath.push(index.into()),
                 Err(e) => return Err(e),
             }

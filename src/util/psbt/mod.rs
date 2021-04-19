@@ -20,7 +20,7 @@
 
 use blockdata::script::Script;
 use blockdata::transaction::Transaction;
-use consensus::{encode, Encodable, Decodable};
+use consensus::{ByteCounter, encode, Encodable, Decodable};
 
 use std::io;
 
@@ -162,18 +162,18 @@ impl Encodable for PartiallySignedTransaction {
 }
 
 impl Decodable for PartiallySignedTransaction {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let magic: [u8; 4] = Decodable::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let magic: [u8; 4] = Decodable::consensus_decode(&mut d, c)?;
 
         if *b"psbt" != magic {
             return Err(Error::InvalidMagic.into());
         }
 
-        if 0xff_u8 != u8::consensus_decode(&mut d)? {
+        if 0xff_u8 != u8::consensus_decode(&mut d, c)? {
             return Err(Error::InvalidSeparator.into());
         }
 
-        let global: Global = Decodable::consensus_decode(&mut d)?;
+        let global: Global = Decodable::consensus_decode(&mut d, c)?;
 
         let inputs: Vec<Input> = {
             let inputs_len: usize = (&global.unsigned_tx.input).len();
@@ -181,7 +181,7 @@ impl Decodable for PartiallySignedTransaction {
             let mut inputs: Vec<Input> = Vec::with_capacity(inputs_len);
 
             for _ in 0..inputs_len {
-                inputs.push(Decodable::consensus_decode(&mut d)?);
+                inputs.push(Decodable::consensus_decode(&mut d, c)?);
             }
 
             inputs
@@ -193,7 +193,7 @@ impl Decodable for PartiallySignedTransaction {
             let mut outputs: Vec<Output> = Vec::with_capacity(outputs_len);
 
             for _ in 0..outputs_len {
-                outputs.push(Decodable::consensus_decode(&mut d)?);
+                outputs.push(Decodable::consensus_decode(&mut d, c)?);
             }
 
             outputs

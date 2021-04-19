@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use blockdata::script::Script;
-use consensus::encode;
+use consensus::{encode, ByteCounter};
 use util::bip32::KeySource;
 use util::key::PublicKey;
 use util::psbt;

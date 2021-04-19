@@ -23,8 +23,7 @@ use std::borrow::Cow;
 
 use network::address::Address;
 use network::constants::{self, ServiceFlags};
-use consensus::{Encodable, Decodable, ReadExt};
-use consensus::encode;
+use consensus::{encode, ByteCounter, Encodable, Decodable, ReadExt};
 use network::message::CommandString;
 use hashes::sha256d;
 
@@ -113,7 +112,8 @@ impl Encodable for RejectReason {
 }
 
 impl Decodable for RejectReason {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        c.decrement(std::mem::size_of::<u8>())?;
         Ok(match d.read_u8()? {
             0x01 => RejectReason::Malformed,
             0x10 => RejectReason::Invalid,

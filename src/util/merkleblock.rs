@@ -60,7 +60,7 @@ use hash_types::{Txid, TxMerkleNode};
 
 use blockdata::transaction::Transaction;
 use blockdata::constants::{MAX_BLOCK_WEIGHT, MIN_TRANSACTION_WEIGHT};
-use consensus::encode::{self, Decodable, Encodable};
+use consensus::encode::{self, Decodable, Encodable, ByteCounter};
 use util::merkleblock::MerkleBlockError::*;
 use {Block, BlockHeader};
 
@@ -362,11 +362,11 @@ impl Encodable for PartialMerkleTree {
 }
 
 impl Decodable for PartialMerkleTree {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let num_transactions: u32 = Decodable::consensus_decode(&mut d)?;
-        let hashes: Vec<TxMerkleNode> = Decodable::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let num_transactions: u32 = Decodable::consensus_decode(&mut d, c)?;
+        let hashes: Vec<TxMerkleNode> = Decodable::consensus_decode(&mut d, c)?;
 
-        let bytes: Vec<u8> = Decodable::consensus_decode(d)?;
+        let bytes: Vec<u8> = Decodable::consensus_decode(d, c)?;
         let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
 
         for (p, bit) in bits.iter_mut().enumerate() {
@@ -486,10 +486,10 @@ impl Encodable for MerkleBlock {
 }
 
 impl Decodable for MerkleBlock {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
         Ok(MerkleBlock {
-            header: Decodable::consensus_decode(&mut d)?,
-            txn: Decodable::consensus_decode(d)?,
+            header: Decodable::consensus_decode(&mut d, c)?,
+            txn: Decodable::consensus_decode(d, c)?,
         })
     }
 }

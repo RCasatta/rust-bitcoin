@@ -23,7 +23,7 @@ use std::io;
 use hashes::sha256d;
 
 use network::constants;
-use consensus::encode::{self, Decodable, Encodable};
+use consensus::{encode, Decodable, Encodable, ByteCounter};
 use hash_types::{BlockHash, Txid, Wtxid};
 
 /// An inventory item.
@@ -76,18 +76,18 @@ impl Encodable for Inventory {
 
 impl Decodable for Inventory {
     #[inline]
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let inv_type: u32 = Decodable::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let inv_type: u32 = Decodable::consensus_decode(&mut d, c)?;
         Ok(match inv_type {
             0 => Inventory::Error,
-            1 => Inventory::Transaction(Decodable::consensus_decode(&mut d)?),
-            2 => Inventory::Block(Decodable::consensus_decode(&mut d)?),
-            5 => Inventory::WTx(Decodable::consensus_decode(&mut d)?),
-            0x40000001 => Inventory::WitnessTransaction(Decodable::consensus_decode(&mut d)?),
-            0x40000002 => Inventory::WitnessBlock(Decodable::consensus_decode(&mut d)?),
+            1 => Inventory::Transaction(Decodable::consensus_decode(&mut d, c)?),
+            2 => Inventory::Block(Decodable::consensus_decode(&mut d, c)?),
+            5 => Inventory::WTx(Decodable::consensus_decode(&mut d, c)?),
+            0x40000001 => Inventory::WitnessTransaction(Decodable::consensus_decode(&mut d, c)?),
+            0x40000002 => Inventory::WitnessBlock(Decodable::consensus_decode(&mut d, c)?),
             tp => Inventory::Unknown {
                 inv_type: tp,
-                hash: Decodable::consensus_decode(&mut d)?,
+                hash: Decodable::consensus_decode(&mut d, c)?,
             }
         })
     }

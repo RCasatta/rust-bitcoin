@@ -33,7 +33,7 @@ use util::endian;
 use blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use blockdata::script::Script;
-use consensus::{encode, Decodable, Encodable};
+use consensus::{encode, Decodable, Encodable, ByteCounter};
 use hash_types::{SigHash, Txid, Wtxid};
 use VarInt;
 
@@ -503,10 +503,10 @@ impl Encodable for OutPoint {
     }
 }
 impl Decodable for OutPoint {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
         Ok(OutPoint {
-            txid: Decodable::consensus_decode(&mut d)?,
-            vout: Decodable::consensus_decode(d)?,
+            txid: Decodable::consensus_decode(&mut d, c)?,
+            vout: Decodable::consensus_decode(d, c)?,
         })
     }
 }
@@ -524,11 +524,11 @@ impl Encodable for TxIn {
     }
 }
 impl Decodable for TxIn {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
         Ok(TxIn {
-            previous_output: Decodable::consensus_decode(&mut d)?,
-            script_sig: Decodable::consensus_decode(&mut d)?,
-            sequence: Decodable::consensus_decode(d)?,
+            previous_output: Decodable::consensus_decode(&mut d, c)?,
+            script_sig: Decodable::consensus_decode(&mut d, c)?,
+            sequence: Decodable::consensus_decode(d, c)?,
             witness: vec![],
         })
     }
@@ -566,19 +566,19 @@ impl Encodable for Transaction {
 }
 
 impl Decodable for Transaction {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = i32::consensus_decode(&mut d)?;
-        let input = Vec::<TxIn>::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let version = i32::consensus_decode(&mut d, c)?;
+        let input = Vec::<TxIn>::consensus_decode(&mut d, c)?;
         // segwit
         if input.is_empty() {
-            let segwit_flag = u8::consensus_decode(&mut d)?;
+            let segwit_flag = u8::consensus_decode(&mut d, c)?;
             match segwit_flag {
                 // BIP144 input witnesses
                 1 => {
-                    let mut input = Vec::<TxIn>::consensus_decode(&mut d)?;
-                    let output = Vec::<TxOut>::consensus_decode(&mut d)?;
+                    let mut input = Vec::<TxIn>::consensus_decode(&mut d, c)?;
+                    let output = Vec::<TxOut>::consensus_decode(&mut d, c)?;
                     for txin in input.iter_mut() {
-                        txin.witness = Decodable::consensus_decode(&mut d)?;
+                        txin.witness = Decodable::consensus_decode(&mut d, c)?;
                     }
                     if !input.is_empty() && input.iter().all(|input| input.witness.is_empty()) {
                         Err(encode::Error::ParseFailed("witness flag set but no witnesses present"))
@@ -587,7 +587,7 @@ impl Decodable for Transaction {
                             version: version,
                             input: input,
                             output: output,
-                            lock_time: Decodable::consensus_decode(d)?,
+                            lock_time: Decodable::consensus_decode(d, c)?,
                         })
                     }
                 }
@@ -601,8 +601,8 @@ impl Decodable for Transaction {
             Ok(Transaction {
                 version: version,
                 input: input,
-                output: Decodable::consensus_decode(&mut d)?,
-                lock_time: Decodable::consensus_decode(d)?,
+                output: Decodable::consensus_decode(&mut d, c)?,
+                lock_time: Decodable::consensus_decode(d, c)?,
             })
         }
     }
@@ -748,6 +748,7 @@ mod tests {
     use std::str::FromStr;
     use blockdata::constants::WITNESS_SCALE_FACTOR;
     use blockdata::script::Script;
+    use consensus::encode;
     use consensus::encode::serialize;
     use consensus::encode::deserialize;
 
@@ -903,6 +904,15 @@ mod tests {
 
         let reser = serialize(&tx);
         assert_eq!(tx_bytes, reser);
+    }
+
+    #[test]
+    fn test_big_witness() {
+        let vec = vec![vec![0u8;1_000_000]; 5];
+        let serialized = serialize(&vec);
+        let result: Result<Vec<Vec<u8>>, encode::Error> = deserialize(&serialized);
+        assert!(result.is_err())
+
     }
 
     #[test]

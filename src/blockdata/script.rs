@@ -31,7 +31,7 @@ use std::{error, fmt, io, str};
 
 use hash_types::{PubkeyHash, WPubkeyHash, ScriptHash, WScriptHash};
 use blockdata::opcodes;
-use consensus::{encode, Decodable, Encodable};
+use consensus::{encode, Decodable, Encodable, ByteCounter};
 use hashes::{Hash, hex};
 #[cfg(feature="bitcoinconsensus")] use bitcoinconsensus;
 #[cfg(feature="bitcoinconsensus")] use std::convert;
@@ -874,8 +874,8 @@ impl Encodable for Script {
 
 impl Decodable for Script {
     #[inline]
-    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
-        Ok(Script(Decodable::consensus_decode(d)?))
+    fn consensus_decode<D: io::Read>(d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        Ok(Script(Decodable::consensus_decode(d, c)?))
     }
 }
 

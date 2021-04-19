@@ -28,7 +28,7 @@ use util::hash::bitcoin_merkle_root;
 use hashes::{Hash, HashEngine};
 use hash_types::{Wtxid, BlockHash, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
 use util::uint::Uint256;
-use consensus::encode::Encodable;
+use consensus::Encodable;
 use network::constants::Network;
 use blockdata::transaction::Transaction;
 use blockdata::constants::{max_target, WITNESS_SCALE_FACTOR};

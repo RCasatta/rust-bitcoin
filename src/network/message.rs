@@ -29,9 +29,8 @@ use network::address::{Address, AddrV2Message};
 use network::message_network;
 use network::message_blockdata;
 use network::message_filter;
-use consensus::encode::{CheckedData, Decodable, Encodable, VarInt};
-use consensus::{encode, serialize};
-use consensus::encode::MAX_VEC_SIZE;
+use consensus::{ByteCounter, Decodable, Encodable, encode, serialize};
+use consensus::encode::{CheckedData, VarInt, MAX_VEC_SIZE};
 
 /// The maximum number of [Inventory] items in an `inv` message.
 ///
@@ -89,8 +88,8 @@ impl Encodable for CommandString {
 
 impl Decodable for CommandString {
     #[inline]
-    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
-        let rawbytes: [u8; 12] = Decodable::consensus_decode(d)?;
+    fn consensus_decode<D: io::Read>(d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let rawbytes: [u8; 12] = Decodable::consensus_decode(d, c)?;
         let rv = iter::FromIterator::from_iter(
             rawbytes
                 .iter()
@@ -313,8 +312,8 @@ struct HeaderDeserializationWrapper(Vec<block::BlockHeader>);
 
 impl Decodable for HeaderDeserializationWrapper {
     #[inline]
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let len = VarInt::consensus_decode(&mut d)?.0;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let len = VarInt::consensus_decode(&mut d, c)?.0;
         let byte_size = (len as usize)
                             .checked_mul(mem::size_of::<block::BlockHeader>())
                             .ok_or(encode::Error::ParseFailed("Invalid length"))?;
@@ -323,8 +322,8 @@ impl Decodable for HeaderDeserializationWrapper {
         }
         let mut ret = Vec::with_capacity(len as usize);
         for _ in 0..len {
-            ret.push(Decodable::consensus_decode(&mut d)?);
-            if u8::consensus_decode(&mut d)? != 0u8 {
+            ret.push(Decodable::consensus_decode(&mut d, c)?);
+            if u8::consensus_decode(&mut d, c)? != 0u8 {
                 return Err(encode::Error::ParseFailed("Headers message should not contain transactions"));
             }
         }
@@ -333,42 +332,42 @@ impl Decodable for HeaderDeserializationWrapper {
 }
 
 impl Decodable for RawNetworkMessage {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let magic = Decodable::consensus_decode(&mut d)?;
-        let cmd = CommandString::consensus_decode(&mut d)?;
-        let raw_payload = CheckedData::consensus_decode(&mut d)?.0;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let magic = Decodable::consensus_decode(&mut d, c)?;
+        let cmd = CommandString::consensus_decode(&mut d, c)?;
+        let raw_payload = CheckedData::consensus_decode(&mut d, c)?.0;
 
         let mut mem_d = Cursor::new(raw_payload);
         let payload = match &cmd.0[..] {
-            "version" => NetworkMessage::Version(Decodable::consensus_decode(&mut mem_d)?),
+            "version" => NetworkMessage::Version(Decodable::consensus_decode(&mut mem_d, c)?),
             "verack"  => NetworkMessage::Verack,
-            "addr"    => NetworkMessage::Addr(Decodable::consensus_decode(&mut mem_d)?),
-            "inv"     => NetworkMessage::Inv(Decodable::consensus_decode(&mut mem_d)?),
-            "getdata" => NetworkMessage::GetData(Decodable::consensus_decode(&mut mem_d)?),
-            "notfound" => NetworkMessage::NotFound(Decodable::consensus_decode(&mut mem_d)?),
-            "getblocks" => NetworkMessage::GetBlocks(Decodable::consensus_decode(&mut mem_d)?),
-            "getheaders" => NetworkMessage::GetHeaders(Decodable::consensus_decode(&mut mem_d)?),
+            "addr"    => NetworkMessage::Addr(Decodable::consensus_decode(&mut mem_d, c)?),
+            "inv"     => NetworkMessage::Inv(Decodable::consensus_decode(&mut mem_d, c)?),
+            "getdata" => NetworkMessage::GetData(Decodable::consensus_decode(&mut mem_d, c)?),
+            "notfound" => NetworkMessage::NotFound(Decodable::consensus_decode(&mut mem_d, c)?),
+            "getblocks" => NetworkMessage::GetBlocks(Decodable::consensus_decode(&mut mem_d, c)?),
+            "getheaders" => NetworkMessage::GetHeaders(Decodable::consensus_decode(&mut mem_d, c)?),
             "mempool" => NetworkMessage::MemPool,
-            "block"   => NetworkMessage::Block(Decodable::consensus_decode(&mut mem_d)?),
+            "block"   => NetworkMessage::Block(Decodable::consensus_decode(&mut mem_d, c)?),
             "headers" => NetworkMessage::Headers(
-                HeaderDeserializationWrapper::consensus_decode(&mut mem_d)?.0
+                HeaderDeserializationWrapper::consensus_decode(&mut mem_d, c)?.0
             ),
             "sendheaders" => NetworkMessage::SendHeaders,
             "getaddr" => NetworkMessage::GetAddr,
-            "ping"    => NetworkMessage::Ping(Decodable::consensus_decode(&mut mem_d)?),
-            "pong"    => NetworkMessage::Pong(Decodable::consensus_decode(&mut mem_d)?),
-            "tx"      => NetworkMessage::Tx(Decodable::consensus_decode(&mut mem_d)?),
-            "getcfilters" => NetworkMessage::GetCFilters(Decodable::consensus_decode(&mut mem_d)?),
-            "cfilter" => NetworkMessage::CFilter(Decodable::consensus_decode(&mut mem_d)?),
-            "getcfheaders" => NetworkMessage::GetCFHeaders(Decodable::consensus_decode(&mut mem_d)?),
-            "cfheaders" => NetworkMessage::CFHeaders(Decodable::consensus_decode(&mut mem_d)?),
-            "getcfcheckpt" => NetworkMessage::GetCFCheckpt(Decodable::consensus_decode(&mut mem_d)?),
-            "cfcheckpt" => NetworkMessage::CFCheckpt(Decodable::consensus_decode(&mut mem_d)?),
-            "reject" => NetworkMessage::Reject(Decodable::consensus_decode(&mut mem_d)?),
-            "alert"   => NetworkMessage::Alert(Decodable::consensus_decode(&mut mem_d)?),
-            "feefilter" => NetworkMessage::FeeFilter(Decodable::consensus_decode(&mut mem_d)?),
+            "ping"    => NetworkMessage::Ping(Decodable::consensus_decode(&mut mem_d, c)?),
+            "pong"    => NetworkMessage::Pong(Decodable::consensus_decode(&mut mem_d, c)?),
+            "tx"      => NetworkMessage::Tx(Decodable::consensus_decode(&mut mem_d, c)?),
+            "getcfilters" => NetworkMessage::GetCFilters(Decodable::consensus_decode(&mut mem_d, c)?),
+            "cfilter" => NetworkMessage::CFilter(Decodable::consensus_decode(&mut mem_d, c)?),
+            "getcfheaders" => NetworkMessage::GetCFHeaders(Decodable::consensus_decode(&mut mem_d, c)?),
+            "cfheaders" => NetworkMessage::CFHeaders(Decodable::consensus_decode(&mut mem_d, c)?),
+            "getcfcheckpt" => NetworkMessage::GetCFCheckpt(Decodable::consensus_decode(&mut mem_d, c)?),
+            "cfcheckpt" => NetworkMessage::CFCheckpt(Decodable::consensus_decode(&mut mem_d, c)?),
+            "reject" => NetworkMessage::Reject(Decodable::consensus_decode(&mut mem_d, c)?),
+            "alert"   => NetworkMessage::Alert(Decodable::consensus_decode(&mut mem_d, c)?),
+            "feefilter" => NetworkMessage::FeeFilter(Decodable::consensus_decode(&mut mem_d, c)?),
             "wtxidrelay" => NetworkMessage::WtxidRelay,
-            "addrv2" => NetworkMessage::AddrV2(Decodable::consensus_decode(&mut mem_d)?),
+            "addrv2" => NetworkMessage::AddrV2(Decodable::consensus_decode(&mut mem_d, c)?),
             "sendaddrv2" => NetworkMessage::SendAddrV2,
             _ => NetworkMessage::Unknown {
                 command: cmd,

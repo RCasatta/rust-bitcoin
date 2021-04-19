@@ -27,9 +27,9 @@ macro_rules! impl_hashencode {
         }
 
         impl $crate::consensus::Decodable for $hashtype {
-            fn consensus_decode<D: ::std::io::Read>(d: D) -> Result<Self, $crate::consensus::encode::Error> {
+            fn consensus_decode<D: ::std::io::Read>(d: D, c: &mut $crate::consensus::ByteCounter) -> Result<Self, $crate::consensus::encode::Error> {
                 use $crate::hashes::Hash;
-                Ok(Self::from_inner(<<$hashtype as $crate::hashes::Hash>::Inner>::consensus_decode(d)?))
+                Ok(Self::from_inner(<<$hashtype as $crate::hashes::Hash>::Inner>::consensus_decode(d, c)?))
             }
         }
     }

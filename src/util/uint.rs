@@ -418,12 +418,12 @@ macro_rules! construct_uint {
 
         impl $crate::consensus::Decodable for $name {
             fn consensus_decode<D: ::std::io::Read>(
-                mut d: D,
+                mut d: D, c: &mut $crate::consensus::encode::ByteCounter
             ) -> Result<$name, $crate::consensus::encode::Error> {
                 use $crate::consensus::Decodable;
                 let mut ret: [u64; $n_words] = [0; $n_words];
                 for i in 0..$n_words {
-                    ret[i] = Decodable::consensus_decode(&mut d)?;
+                    ret[i] = Decodable::consensus_decode(&mut d, c)?;
                 }
                 Ok($name(ret))
             }

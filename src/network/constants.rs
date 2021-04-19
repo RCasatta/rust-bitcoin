@@ -39,7 +39,7 @@
 
 use std::{fmt, io, ops};
 
-use consensus::encode::{self, Encodable, Decodable};
+use consensus::{encode, Encodable, Decodable, ByteCounter};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
@@ -283,8 +283,8 @@ impl Encodable for ServiceFlags {
 
 impl Decodable for ServiceFlags {
     #[inline]
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        Ok(ServiceFlags(Decodable::consensus_decode(&mut d)?))
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        Ok(ServiceFlags(Decodable::consensus_decode(&mut d, c)?))
     }
 }
 

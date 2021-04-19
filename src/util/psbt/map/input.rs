@@ -17,7 +17,7 @@ use std::collections::btree_map::{BTreeMap, Entry};
 
 use blockdata::script::Script;
 use blockdata::transaction::{SigHashType, Transaction, TxOut};
-use consensus::encode;
+use consensus::{encode, ByteCounter};
 use util::bip32::KeySource;
 use hashes::{self, hash160, ripemd160, sha256, sha256d};
 use util::key::PublicKey;

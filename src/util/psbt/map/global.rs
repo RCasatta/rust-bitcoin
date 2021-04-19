@@ -18,7 +18,7 @@ use std::io::{self, Cursor, Read};
 use std::cmp;
 
 use blockdata::transaction::Transaction;
-use consensus::{encode, Encodable, Decodable};
+use consensus::{ByteCounter, encode, Encodable, Decodable, ReadExt};
 use util::psbt::map::Map;
 use util::psbt::raw;
 use util::psbt;
@@ -228,7 +228,7 @@ impl Map for Global {
 impl_psbtmap_consensus_encoding!(Global);
 
 impl Decodable for Global {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
 
         let mut tx: Option<Transaction> = None;
         let mut version: Option<u32> = None;
@@ -237,7 +237,7 @@ impl Decodable for Global {
         let mut proprietary: BTreeMap<raw::ProprietaryKey, Vec<u8>> = Default::default();
 
         loop {
-            match raw::Pair::consensus_decode(&mut d) {
+            match raw::Pair::consensus_decode(&mut d, c) {
                 Ok(pair) => {
                     match pair.key.type_value {
                         PSBT_GLOBAL_UNSIGNED_TX => {
@@ -252,10 +252,10 @@ impl Decodable for Global {
                                     // txs without witnesses are deserialized
                                     // properly.
                                     tx = Some(Transaction {
-                                        version: Decodable::consensus_decode(&mut decoder)?,
-                                        input: Decodable::consensus_decode(&mut decoder)?,
-                                        output: Decodable::consensus_decode(&mut decoder)?,
-                                        lock_time: Decodable::consensus_decode(&mut decoder)?,
+                                        version: Decodable::consensus_decode(&mut decoder, c)?,
+                                        input: Decodable::consensus_decode(&mut decoder, c)?,
+                                        output: Decodable::consensus_decode(&mut decoder, c)?,
+                                        lock_time: Decodable::consensus_decode(&mut decoder, c)?,
                                     });
 
                                     if decoder.position() != vlen as u64 {
@@ -284,7 +284,9 @@ impl Decodable for Global {
                                 let mut fingerprint = [0u8; 4];
                                 decoder.read_exact(&mut fingerprint[..])?;
                                 let mut path = Vec::<ChildNumber>::with_capacity(child_count);
-                                while let Ok(index) = u32::consensus_decode(&mut decoder) {
+
+                                while let Ok(index) = ReadExt::read_u32(&mut decoder) {
+                                    c.decrement(std::mem::size_of::<u32>())?;
                                     path.push(ChildNumber::from(index))
                                 }
                                 let derivation = DerivationPath::from(path);
@@ -306,7 +308,8 @@ impl Decodable for Global {
                                     if vlen != 4 {
                                         return Err(encode::Error::ParseFailed("Wrong global version value length (must be 4 bytes)"))
                                     }
-                                    version = Some(Decodable::consensus_decode(&mut decoder)?);
+                                    c.decrement(std::mem::size_of::<u32>())?;
+                                    version = Some(ReadExt::read_u32(&mut decoder)?);
                                     // We only understand version 0 PSBTs. According to BIP-174 we
                                     // should throw an error if we see anything other than version 0.
                                     if version != Some(0) {

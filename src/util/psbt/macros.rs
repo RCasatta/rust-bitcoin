@@ -77,12 +77,12 @@ macro_rules! impl_psbtmap_consensus_decoding {
     ($thing:ty) => {
         impl $crate::consensus::Decodable for $thing {
             fn consensus_decode<D: ::std::io::Read>(
-                mut d: D,
+                mut d: D, c: &mut ByteCounter,
             ) -> Result<Self, $crate::consensus::encode::Error> {
                 let mut rv: Self = ::std::default::Default::default();
 
                 loop {
-                    match $crate::consensus::Decodable::consensus_decode(&mut d) {
+                    match $crate::consensus::Decodable::consensus_decode(&mut d, c) {
                         Ok(pair) => $crate::util::psbt::Map::insert_pair(&mut rv, pair)?,
                         Err($crate::consensus::encode::Error::Psbt($crate::util::psbt::Error::NoMorePairs)) => return Ok(rv),
                         Err(e) => return Err(e),

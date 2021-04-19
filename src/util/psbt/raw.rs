@@ -19,7 +19,7 @@
 
 use std::{fmt, io};
 
-use consensus::encode::{self, ReadExt, WriteExt, Decodable, Encodable, VarInt, serialize, deserialize, MAX_VEC_SIZE};
+use consensus::encode::{self, ReadExt, WriteExt, Decodable, Encodable, VarInt, serialize, deserialize, MAX_VEC_SIZE, ByteCounter};
 use hashes::hex;
 use util::psbt::Error;
 
@@ -72,8 +72,8 @@ impl fmt::Display for Key {
 }
 
 impl Decodable for Key {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let VarInt(byte_size): VarInt = Decodable::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let VarInt(byte_size): VarInt = Decodable::consensus_decode(&mut d, c)?;
 
         if byte_size == 0 {
             return Err(Error::NoMorePairs.into());
@@ -88,11 +88,11 @@ impl Decodable for Key {
             })
         }
 
-        let type_value: u8 = Decodable::consensus_decode(&mut d)?;
+        let type_value: u8 = Decodable::consensus_decode(&mut d, c)?;
 
         let mut key = Vec::with_capacity(key_byte_size as usize);
         for _ in 0..key_byte_size {
-            key.push(Decodable::consensus_decode(&mut d)?);
+            key.push(Decodable::consensus_decode(&mut d, c)?);
         }
 
         Ok(Key {
@@ -131,10 +131,10 @@ impl Encodable for Pair {
 }
 
 impl Decodable for Pair {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
         Ok(Pair {
-            key: Decodable::consensus_decode(&mut d)?,
-            value: Decodable::consensus_decode(d)?,
+            key: Decodable::consensus_decode(&mut d, c)?,
+            value: Decodable::consensus_decode(d, c)?,
         })
     }
 }
@@ -149,11 +149,12 @@ impl<Subtype> Encodable for ProprietaryKey<Subtype> where Subtype: Copy + From<u
 }
 
 impl<Subtype> Decodable for ProprietaryKey<Subtype> where Subtype: Copy + From<u8> + Into<u8> {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let prefix = Vec::<u8>::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read>(mut d: D, c: &mut ByteCounter) -> Result<Self, encode::Error> {
+        let prefix = Vec::<u8>::consensus_decode(&mut d, c)?;
         let mut key = vec![];
+        c.decrement(std::mem::size_of::<u8>())?;
         let subtype = Subtype::from(d.read_u8()?);
-        d.read_to_end(&mut key)?;
+        c.decrement(d.read_to_end(&mut key)?)?;
 
         Ok(ProprietaryKey {
             prefix,

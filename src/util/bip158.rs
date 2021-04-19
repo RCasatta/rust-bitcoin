@@ -51,14 +51,13 @@ use std::fmt::{Display, Formatter};
 use std::io::Cursor;
 use std::cmp::Ordering;
 
-
 use hashes::{Hash, siphash24};
 use hash_types::{BlockHash, FilterHash, FilterHeader};
 
 use blockdata::block::Block;
 use blockdata::script::Script;
 use blockdata::transaction::OutPoint;
-use consensus::{Decodable, Encodable};
+use consensus::{ByteCounter, Decodable, Encodable};
 use consensus::encode::VarInt;
 use util::endian;
 
@@ -243,7 +242,7 @@ impl GCSFilterReader {
     /// match any query pattern
     pub fn match_any(&self, reader: &mut dyn io::Read, query: &mut dyn Iterator<Item=&[u8]>) -> Result<bool, Error> {
         let mut decoder = reader;
-        let n_elements: VarInt = Decodable::consensus_decode(&mut decoder).unwrap_or(VarInt(0));
+        let n_elements: VarInt = Decodable::consensus_decode(&mut decoder, &mut ByteCounter::default()).unwrap_or(VarInt(0));
         let reader = &mut decoder;
         // map hashes to [0, n_elements << grp]
         let nm = n_elements.0 * self.m;
@@ -283,7 +282,7 @@ impl GCSFilterReader {
     /// match all query pattern
     pub fn match_all(&self, reader: &mut dyn io::Read, query: &mut dyn Iterator<Item=&[u8]>) -> Result<bool, Error> {
         let mut decoder = reader;
-        let n_elements: VarInt = Decodable::consensus_decode(&mut decoder).unwrap_or(VarInt(0));
+        let n_elements: VarInt = Decodable::consensus_decode(&mut decoder, &mut ByteCounter::default()).unwrap_or(VarInt(0));
         let reader = &mut decoder;
         // map hashes to [0, n_elements << grp]
         let nm = n_elements.0 * self.m;
