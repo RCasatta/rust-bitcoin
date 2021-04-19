@@ -547,6 +547,29 @@ impl Encodable for [u16; 8] {
     }
 }
 
+struct CountRead<'r> {
+    reader: &'r mut dyn io::Read,
+    bytes_read: usize,
+}
+
+impl<'r> CountRead<'r> {
+    fn new<R: io::Read>(reader: &'r mut R) -> Self {
+        CountRead {
+            reader: reader as &'r mut dyn io::Read,
+            bytes_read: 0,
+        }
+    }
+}
+
+impl<'r> io::Read for CountRead<'r> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let bytes = self.reader.read(buf)?;
+        self.bytes_read += bytes;
+
+        Ok(bytes)
+    }
+}
+
 // Vectors
 macro_rules! impl_vec {
     ($type: ty) => {
@@ -568,15 +591,17 @@ macro_rules! impl_vec {
             #[inline]
             fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, Error> {
                 let len = VarInt::consensus_decode(&mut d)?.0;
-                let byte_size = (len as usize)
-                                    .checked_mul(mem::size_of::<$type>())
-                                    .ok_or(self::Error::ParseFailed("Invalid length"))?;
-                if byte_size > MAX_VEC_SIZE {
-                    return Err(self::Error::OversizedVectorAllocation { requested: byte_size, max: MAX_VEC_SIZE })
-                }
+                // Make sure the size of the vec we'll try to allocate fits in a `usize`
+                (len as usize)
+                    .checked_mul(mem::size_of::<$type>())
+                    .ok_or(self::Error::ParseFailed("Invalid length"))?;
+                let mut count_reader = CountRead::new(&mut d);
                 let mut ret = Vec::with_capacity(len as usize);
                 for _ in 0..len {
-                    ret.push(Decodable::consensus_decode(&mut d)?);
+                    ret.push(Decodable::consensus_decode(&mut count_reader)?);
+                }
+                if count_reader.bytes_read > MAX_VEC_SIZE {
+                    return Err(self::Error::OversizedVectorAllocation { requested: count_reader.bytes_read, max: MAX_VEC_SIZE })
                 }
                 Ok(ret)
             }
