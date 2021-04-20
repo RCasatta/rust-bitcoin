@@ -547,24 +547,31 @@ impl Encodable for [u16; 8] {
     }
 }
 
-struct CountRead<'r> {
+/// Read wrapper capped to read [MAX_VEC_SIZE]
+pub struct CappedRead<'r> {
     reader: &'r mut dyn io::Read,
-    bytes_read: usize,
+    remaining: usize,
 }
 
-impl<'r> CountRead<'r> {
-    fn new<R: io::Read>(reader: &'r mut R) -> Self {
-        CountRead {
+impl<'r> CappedRead<'r> {
+    /// New [CappedRead] from a Read type
+    pub fn new<R: io::Read>(reader: &'r mut R) -> Self {
+        Self::with_cap(reader, MAX_VEC_SIZE)
+    }
+
+    /// New [CappedRead] from a Read type with a custom `cap`
+    pub fn with_cap<R: io::Read>(reader: &'r mut R, cap: usize) -> Self {
+        CappedRead {
             reader: reader as &'r mut dyn io::Read,
-            bytes_read: 0,
+            remaining: cap,
         }
     }
 }
 
-impl<'r> io::Read for CountRead<'r> {
+impl<'r> io::Read for CappedRead<'r> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes = self.reader.read(buf)?;
-        self.bytes_read += bytes;
+        self.remaining = self.remaining.checked_sub(bytes).ok_or_else(|| io::Error::new(io::ErrorKind::Other, "cap read exceeded"))?;
 
         Ok(bytes)
     }
@@ -591,18 +598,18 @@ macro_rules! impl_vec {
             #[inline]
             fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, Error> {
                 let len = VarInt::consensus_decode(&mut d)?.0;
-                // Make sure the size of the vec we'll try to allocate fits in a `usize`
-                (len as usize)
+                let bytes = (len as usize)
                     .checked_mul(mem::size_of::<$type>())
                     .ok_or(self::Error::ParseFailed("Invalid length"))?;
-                let mut count_reader = CountRead::new(&mut d);
+                if bytes > MAX_VEC_SIZE {
+                    return Err(self::Error::OversizedVectorAllocation { requested: bytes, max: MAX_VEC_SIZE })
+                }
                 let mut ret = Vec::with_capacity(len as usize);
+                let mut capped_reader = CappedRead::new(&mut d);
                 for _ in 0..len {
-                    ret.push(Decodable::consensus_decode(&mut count_reader)?);
+                    ret.push(Decodable::consensus_decode(&mut capped_reader)?);
                 }
-                if count_reader.bytes_read > MAX_VEC_SIZE {
-                    return Err(self::Error::OversizedVectorAllocation { requested: count_reader.bytes_read, max: MAX_VEC_SIZE })
-                }
+
                 Ok(ret)
             }
         }
@@ -789,6 +796,8 @@ mod tests {
     use secp256k1::rand::{thread_rng, Rng};
     use network::message_blockdata::Inventory;
     use network::Address;
+    use consensus::encode::{CappedRead, MAX_VEC_SIZE};
+    use std::io::{Cursor};
 
     #[test]
     fn serialize_int_test() {
@@ -1020,6 +1029,22 @@ mod tests {
     fn deserialize_checkeddata_test() {
         let cd: Result<CheckedData, _> = deserialize(&[5u8, 0, 0, 0, 162, 107, 175, 90, 1, 2, 3, 4, 5]);
         assert_eq!(cd.ok(), Some(CheckedData(vec![1u8, 2, 3, 4, 5])));
+    }
+
+    #[test]
+    fn capped_reader_test() {
+        let mut cursor = Cursor::new(vec![1u8]);
+        let mut count_read = CappedRead::new(&mut cursor);
+        let v  = VarInt::consensus_decode(&mut count_read).unwrap();
+        assert_eq!(count_read.remaining, MAX_VEC_SIZE - 1);
+        assert_eq!(v.0, 1u64);
+
+        let witness = vec![vec![0u8; 3_999_999]; 2];
+        let ser = serialize(&witness);
+        let mut cursor = Cursor::new(ser);
+        let mut count_read = CappedRead::new(&mut cursor);
+        let err  = Vec::<Vec<u8>>::consensus_decode(&mut count_read);
+        assert!(err.is_err());
     }
 
     #[test]

@@ -18,7 +18,7 @@ use std::io::{self, Cursor, Read};
 use std::cmp;
 
 use blockdata::transaction::Transaction;
-use consensus::{encode, Encodable, Decodable};
+use consensus::{encode, Encodable, Decodable, CappedRead};
 use util::psbt::map::Map;
 use util::psbt::raw;
 use util::psbt;
@@ -229,6 +229,7 @@ impl_psbtmap_consensus_encoding!(Global);
 
 impl Decodable for Global {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+        let mut d = CappedRead::new(&mut d);
 
         let mut tx: Option<Transaction> = None;
         let mut version: Option<u32> = None;

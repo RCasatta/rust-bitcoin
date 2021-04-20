@@ -20,7 +20,7 @@
 
 use blockdata::script::Script;
 use blockdata::transaction::Transaction;
-use consensus::{encode, Encodable, Decodable};
+use consensus::{encode, Encodable, Decodable, CappedRead};
 
 use std::io;
 
@@ -163,6 +163,8 @@ impl Encodable for PartiallySignedTransaction {
 
 impl Decodable for PartiallySignedTransaction {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+        let mut d = CappedRead::new(&mut d);
+
         let magic: [u8; 4] = Decodable::consensus_decode(&mut d)?;
 
         if *b"psbt" != magic {
