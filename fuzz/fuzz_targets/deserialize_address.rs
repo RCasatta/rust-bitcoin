@@ -10,10 +10,10 @@ fn do_test(data: &[u8]) {
 }
 
 #[cfg(feature = "afl")]
-extern crate afl;
+#[macro_use] extern crate afl;
 #[cfg(feature = "afl")]
 fn main() {
-    afl::read_stdio_bytes(|data| {
+    fuzz!(|data| {
         do_test(&data);
     });
 }
@@ -36,9 +36,9 @@ mod tests {
         for (idx, c) in hex.as_bytes().iter().enumerate() {
             b <<= 4;
             match *c {
-                b'A'...b'F' => b |= c - b'A' + 10,
-                b'a'...b'f' => b |= c - b'a' + 10,
-                b'0'...b'9' => b |= c - b'0',
+                b'A'..=b'F' => b |= c - b'A' + 10,
+                b'a'..=b'f' => b |= c - b'a' + 10,
+                b'0'..=b'9' => b |= c - b'0',
                 _ => panic!("Bad hex"),
             }
             if (idx & 1) == 1 {

@@ -23,46 +23,52 @@
 //! software.
 //!
 
-#![crate_name = "bitcoin"]
-#![crate_type = "dylib"]
-#![crate_type = "rlib"]
-
 // Experimental features we need
 #![cfg_attr(all(test, feature = "unstable"), feature(test))]
 
-// Clippy whitelist
-#![cfg_attr(feature = "clippy", allow(needless_range_loop))] // suggests making a big mess of array newtypes
-#![cfg_attr(feature = "clippy", allow(extend_from_slice))]   // `extend_from_slice` only available since 1.6
-
 // Coding conventions
+#![forbid(unsafe_code)]
 #![deny(non_upper_case_globals)]
 #![deny(non_camel_case_types)]
 #![deny(non_snake_case)]
 #![deny(unused_mut)]
+#![deny(dead_code)]
+#![deny(unused_imports)]
 #![deny(missing_docs)]
+#![deny(unused_must_use)]
 
-extern crate bitcoin_bech32;
-extern crate byteorder;
-extern crate crypto;
-extern crate hex;
-extern crate rand;
-extern crate secp256k1;
-#[cfg(feature = "serde")] extern crate serde;
-#[cfg(feature = "strason")] extern crate strason;
-#[cfg(all(test, feature = "unstable"))] extern crate test;
+// Re-exported dependencies.
+#[macro_use] pub extern crate bitcoin_hashes as hashes;
+pub extern crate secp256k1;
+pub extern crate bech32;
+#[cfg(feature = "base64")] pub extern crate base64;
+
 #[cfg(feature="bitcoinconsensus")] extern crate bitcoinconsensus;
+#[cfg(feature = "serde")] #[macro_use] extern crate serde;
+#[cfg(all(test, feature = "serde"))] extern crate serde_json;
+#[cfg(all(test, feature = "serde"))] extern crate serde_test;
+#[cfg(all(test, feature = "serde"))] extern crate bincode;
+#[cfg(all(test, feature = "unstable"))] extern crate test;
+
+#[cfg(target_pointer_width = "16")]
+compile_error!("rust-bitcoin cannot be used on 16-bit architectures");
 
 #[cfg(test)]
 #[macro_use]
 mod test_macros;
 #[macro_use]
 mod internal_macros;
+#[cfg(feature = "serde")]
+mod serde_utils;
+
 #[macro_use]
-pub mod macros;
 pub mod network;
 pub mod blockdata;
 pub mod util;
+pub mod consensus;
+pub mod hash_types;
 
+pub use hash_types::*;
 pub use blockdata::block::Block;
 pub use blockdata::block::BlockHeader;
 pub use blockdata::script::Script;
@@ -71,11 +77,44 @@ pub use blockdata::transaction::TxIn;
 pub use blockdata::transaction::TxOut;
 pub use blockdata::transaction::OutPoint;
 pub use blockdata::transaction::SigHashType;
-pub use network::encodable::VarInt;
-pub use network::serialize::BitcoinHash;
+pub use consensus::encode::VarInt;
+pub use network::constants::Network;
 pub use util::Error;
 pub use util::address::Address;
-pub use util::privkey::Privkey;
-pub use util::decimal::Decimal;
-pub use util::decimal::UDecimal;
+pub use util::address::AddressType;
+pub use util::amount::Amount;
+pub use util::amount::Denomination;
+pub use util::amount::SignedAmount;
+pub use util::key::PrivateKey;
+pub use util::key::PublicKey;
+pub use util::merkleblock::MerkleBlock;
 
+#[cfg(all(test, feature = "unstable"))] use tests::EmptyWrite;
+
+#[cfg(all(test, feature = "unstable"))]
+mod tests {
+    use hashes::core::fmt::Arguments;
+    use std::io::{IoSlice, Result, Write};
+
+    #[derive(Default, Clone, Debug, PartialEq, Eq)]
+    pub struct EmptyWrite;
+
+    impl Write for EmptyWrite {
+        fn write(&mut self, buf: &[u8]) -> Result<usize> {
+            Ok(buf.len())
+        }
+        fn write_vectored(&mut self, bufs: &[IoSlice]) -> Result<usize> {
+            Ok(bufs.iter().map(|s| s.len()).sum())
+        }
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn write_all(&mut self, _: &[u8]) -> Result<()> {
+            Ok(())
+        }
+        fn write_fmt(&mut self, _: Arguments) -> Result<()> {
+            Ok(())
+        }
+    }
+}

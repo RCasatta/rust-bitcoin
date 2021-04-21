@@ -14,7 +14,7 @@
 
 //! Network Support
 //!
-//! This module defines support for (de)serialization and network transport 
+//! This module defines support for (de)serialization and network transport
 //! of Bitcoin data and network messages.
 //!
 
@@ -23,16 +23,14 @@ use std::io;
 use std::error;
 
 pub mod constants;
-pub mod consensus_params;
-pub mod encodable;
-pub mod socket;
-pub mod serialize;
 
 pub mod address;
-pub mod listener;
+pub use self::address::Address;
 pub mod message;
 pub mod message_blockdata;
 pub mod message_network;
+pub mod message_filter;
+pub mod stream_reader;
 
 /// Network error
 #[derive(Debug)]
@@ -49,24 +47,25 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Error::Io(ref e) => fmt::Display::fmt(e, f),
-            Error::SocketMutexPoisoned | Error::SocketNotConnectedToPeer => f.write_str(error::Error::description(self)),
+            Error::SocketMutexPoisoned => f.write_str("socket mutex was poisoned"),
+            Error::SocketNotConnectedToPeer => f.write_str("not connected to peer"),
         }
     }
 }
 
+#[doc(hidden)]
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(err)
+    }
+}
+
 impl error::Error for Error {
-    fn cause(&self) -> Option<&error::Error> {
+
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::Io(ref e) => Some(e),
             Error::SocketMutexPoisoned | Error::SocketNotConnectedToPeer => None,
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            Error::Io(ref e) => e.description(),
-            Error::SocketMutexPoisoned => "socket mutex was poisoned",
-            Error::SocketNotConnectedToPeer => "not connected to peer",
         }
     }
 }
