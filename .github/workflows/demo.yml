@@ -1,9 +1,5 @@
-name: Downstream triggers
-
-on:
-  push:
-    branches:
-      - master
+name: GitHub Actions Demo
+on: [push]
 
 jobs:
   Downstream:

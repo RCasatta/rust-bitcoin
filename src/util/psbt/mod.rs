@@ -904,4 +904,21 @@ mod tests {
         assert!(!rtt.global.proprietary.is_empty());
     }
 
+    #[test]
+    #[cfg(feature = "base64")]
+    fn test_bip174_test_vectors() {
+        use bitcoin_test_vectors::bip174::Valid;
+        use std::str::FromStr;
+
+        let cases = bitcoin_test_vectors::bip174::test_vectors();
+        for case in cases.iter().filter(|c| c.valid != Valid::FailSigner) {
+            match PartiallySignedTransaction::from_str(&case.base64) {
+                Ok(_) => assert_eq!(case.valid, Valid::True),
+                Err(e) => {
+                    println!("{} | {}", e, case.description);
+                    assert_eq!(case.valid, Valid::False)
+                },
+            }
+        }
+    }
 }
