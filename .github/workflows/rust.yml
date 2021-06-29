@@ -43,6 +43,9 @@ jobs:
   Cross:
     name: Cross testing
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: ["s390x-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "i686-pc-windows-gnu", "i686-pc-windows-msvc", "i686-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-gnu", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "riscv64gc-unknown-linux-gnu", "powerpc64-unknown-linux-gnu"	]
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v2
@@ -52,11 +55,11 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          target: s390x-unknown-linux-gnu
+          target: ${{ matrix.arch }}
       - name: install cross
         run: cargo install cross
       - name: run cross test
-        run: cross test --target s390x-unknown-linux-gnu
+        run: cross test --target ${{ matrix.arch }}
 
   Docs:
     name: Docs
