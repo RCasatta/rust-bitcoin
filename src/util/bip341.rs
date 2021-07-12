@@ -38,19 +38,24 @@ pub enum Prevouts<'u> {
 const LEAF_VERSION_TAPSCRIPT: u8 = 0xc0;
 
 /// Information related to the script path spending
-pub struct ScriptPath {
-    script: Script,
+pub struct ScriptPath<'s> {
+    script: &'s Script,
     code_separator_pos: u32,
     leaf_version: u8,
 }
 
-impl Default for ScriptPath {
-    fn default() -> Self {
+impl<'s> ScriptPath<'s> {
+    /// Create a new ScriptPath structure
+    pub fn new(script: &'s Script, code_separator_pos: u32, leaf_version: u8) -> Self {
         ScriptPath {
-            script: Script::default(),
-            code_separator_pos: 0xFFFFFFFFu32,
-            leaf_version: LEAF_VERSION_TAPSCRIPT,
+            script,
+            code_separator_pos,
+            leaf_version,
         }
+    }
+    /// Create a new ScriptPath structure using default values for `code_separator_pos` and `leaf_version`
+    pub fn with_defaults(script: &'s Script) -> Self {
+        Self::new(script, 0xFFFFFFFFu32, LEAF_VERSION_TAPSCRIPT)
     }
 }
 
@@ -540,20 +545,21 @@ mod tests {
         expected_hash: &str,
         sighash_type: SigHashType,
         annex: Option<&str>,
-        script: Option<&str>,
+        script_hex: Option<&str>,
     ) {
         let tx_bytes = Vec::from_hex(tx_hex).unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
         let prevout_bytes = Vec::from_hex(prevout_hex).unwrap();
         let prevouts: Vec<TxOut> = deserialize(&prevout_bytes).unwrap();
         let annex = annex.map(|a| Vec::from_hex(a).unwrap());
-        let script_path: Option<ScriptPath> = script.map(|s| {
-            let script = Script::from_hex(s).unwrap();
-            ScriptPath {
-                script,
-                ..Default::default()
+        let script_inner;
+        let script_path = match script_hex {
+            Some(script_hex) => {
+                script_inner = Script::from_hex(script_hex).unwrap();
+                Some(ScriptPath::with_defaults(&script_inner))
             }
-        });
+            None => None,
+        };
 
         let prevouts = if sighash_type.split_anyonecanpay_flag().1 && tx_bytes[0] % 2 == 0 {
             // for anyonecanpay the `Prevouts::All` variant is good anyway, but sometimes we want to
