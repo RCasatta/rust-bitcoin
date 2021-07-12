@@ -26,13 +26,13 @@ use {Script, SigHashType, Transaction, TxOut};
 
 /// Contains outputs of previous transactions to provide to the [SigHashCache::signature_hash]
 /// method, In the case [SigHashType] variant is `ANYONECANPAY`, [Prevouts::Anyone] may be provided
-pub enum Prevouts {
+pub enum Prevouts<'u> {
     /// When modifier `ANYONECANPAY` is provided, only prevout of the current input is needed,
     /// the first `usize` argument is the input index this [TxOut] is referring to.
-    Anyone(usize, TxOut),
+    Anyone(usize, &'u TxOut),
     /// When `ANYONECANPAY` is not provided, or the caller is handy giving all prevouts so he can reuse
     /// the same data structure for multiple inputs
-    All(Vec<TxOut>),
+    All(&'u [TxOut]),
 }
 
 const LEAF_VERSION_TAPSCRIPT: u8 = 0xc0;
@@ -85,10 +85,10 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-impl Prevouts {
+impl<'u> Prevouts<'u> {
     fn get_all(&self) -> Result<&[TxOut], Error> {
         match self {
-            Prevouts::All(ref prevouts) => Ok(prevouts),
+            Prevouts::All(prevouts) => Ok(prevouts),
             _ => Err(Error::PrevoutKind),
         }
     }
@@ -481,13 +481,13 @@ mod tests {
         let mut sig_hash = SigHashCache::new(&dumb_tx);
 
         assert_eq!(
-            sig_hash.signature_hash(0, &Prevouts::All(vec![]), None, None, SigHashType::All),
+            sig_hash.signature_hash(0, &Prevouts::All(&vec![]), None, None, SigHashType::All),
             Err(Error::PrevoutsSize)
         );
         assert_eq!(
             sig_hash.signature_hash(
                 0,
-                &Prevouts::All(vec![TxOut::default(), TxOut::default()]),
+                &Prevouts::All(&vec![TxOut::default(), TxOut::default()]),
                 None,
                 None,
                 SigHashType::All
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(
             sig_hash.signature_hash(
                 0,
-                &Prevouts::Anyone(1, TxOut::default()),
+                &Prevouts::Anyone(1, &TxOut::default()),
                 None,
                 None,
                 SigHashType::All
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(
             sig_hash.signature_hash(
                 0,
-                &Prevouts::Anyone(1, TxOut::default()),
+                &Prevouts::Anyone(1, &TxOut::default()),
                 None,
                 None,
                 SigHashType::AllPlusAnyoneCanPay
@@ -539,11 +539,11 @@ mod tests {
         });
 
         let prevouts = if sighash_type.split_anyonecanpay_flag().1 && tx_bytes[0] % 2 == 0 {
-            // for anyonecanpay the NotAnyone variant is good anyway, but sometimes we want to
+            // for anyonecanpay the `Prevouts::All` variant is good anyway, but sometimes we want to
             // test other codepaths
-            Prevouts::Anyone(input_index, prevouts[input_index].clone())
+            Prevouts::Anyone(input_index, &prevouts[input_index])
         } else {
-            Prevouts::All(prevouts)
+            Prevouts::All(&prevouts)
         };
 
         let mut sig_hash_cache = SigHashCache::new(&tx);
