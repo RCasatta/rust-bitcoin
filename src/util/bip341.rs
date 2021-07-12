@@ -39,7 +39,7 @@ const LEAF_VERSION_TAPSCRIPT: u8 = 0xc0;
 /// Information related to the script path spending
 pub struct ScriptPath {
     script: Script,
-    code_separator: i32,
+    code_separator_pos: u32,
     leaf_version: u8,
 }
 
@@ -47,7 +47,7 @@ impl Default for ScriptPath {
     fn default() -> Self {
         ScriptPath {
             script: Script::default(),
-            code_separator: -1,
+            code_separator_pos: 0xFFFFFFFFu32,
             leaf_version: LEAF_VERSION_TAPSCRIPT,
         }
     }
@@ -250,7 +250,7 @@ impl<'a> SigHashCache<'a> {
         if let Some(ScriptPath {
             script,
             leaf_version,
-            code_separator,
+            code_separator_pos,
         }) = script_path
         {
             let mut enc = TapLeafHash::engine();
@@ -260,7 +260,7 @@ impl<'a> SigHashCache<'a> {
 
             hash.into_inner().consensus_encode(&mut writer)?;
             0u8.consensus_encode(&mut writer)?;
-            code_separator.consensus_encode(&mut writer)?;
+            code_separator_pos.consensus_encode(&mut writer)?;
         }
 
         Ok(())
