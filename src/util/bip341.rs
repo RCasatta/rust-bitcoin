@@ -78,6 +78,9 @@ pub enum Error {
 
     /// A single prevout has been provided but all prevouts are needed without `ANYONECANPAY`
     PrevoutKind,
+
+    /// Annex must be at least one byte long and the first bytes must be `0x50`
+    WrongAnnex,
 }
 
 impl fmt::Display for Error {
@@ -87,7 +90,8 @@ impl fmt::Display for Error {
             Error::IndexGreaterThanInputsSize => write!(f, "Requested input index is greater than the number of inputs in the given transaction"),
             Error::PrevoutsSize => write!(f, "Number of supplied prevouts differs from the number of inputs in transaction"),
             Error::PrevoutIndex => write!(f, "The index requested is greater than available prevouts or different from the provided [Provided::Anyone] index"),
-            Error::PrevoutKind => write!(f, "A single prevout has been provided but all prevouts are needed without `ANYONECANPAY`")
+            Error::PrevoutKind => write!(f, "A single prevout has been provided but all prevouts are needed without `ANYONECANPAY`"),
+            Error::WrongAnnex => write!(f, "Annex must be at least one byte long and the first bytes must be `0x50`"),
         }
     }
 }
@@ -157,7 +161,7 @@ impl<'a> SigHashCache<'a> {
         mut writer: Write,
         input_index: usize,
         prevouts: &Prevouts,
-        annex: Option<Vec<u8>>,
+        annex: Option<Annex>,
         script_path: Option<ScriptPath>,
         sighash_type: SigHashType,
     ) -> Result<(), Error> {
@@ -241,7 +245,7 @@ impl<'a> SigHashCache<'a> {
         //      includes the mandatory 0x50 prefix.
         if let Some(annex) = annex {
             let mut enc = sha256::Hash::engine();
-            annex.consensus_encode(&mut enc)?;
+            annex.as_bytes().to_vec().consensus_encode(&mut enc)?;
             let hash = sha256::Hash::from_engine(enc);
             hash.consensus_encode(&mut writer)?;
         }
@@ -284,7 +288,7 @@ impl<'a> SigHashCache<'a> {
         &mut self,
         input_index: usize,
         prevouts: &Prevouts,
-        annex: Option<Vec<u8>>,
+        annex: Option<Annex>,
         script_path: Option<ScriptPath>,
         sighash_type: SigHashType,
     ) -> Result<TapSighashHash, Error> {
@@ -370,12 +374,32 @@ impl From<io::Error> for Error {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+/// The `Annex` struct is a slice wrapper enforcing first byte to be `0x50`
+pub struct Annex<'a>(&'a [u8]);
+
+impl<'a> Annex<'a> {
+    /// Creates a new `Annex` struct checking the first byte is `0x50`
+    pub fn new(annex_bytes: &'a [u8]) -> Result<Self, Error> {
+        if annex_bytes.first() == Some(&0x50) {
+            Ok(Annex(annex_bytes))
+        } else {
+            Err(Error::WrongAnnex)
+        }
+    }
+
+    /// Returns the Annex bytes data (including first byte `0x50`)
+    pub fn as_bytes(&self) -> &[u8] {
+        &*self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use consensus::deserialize;
     use hashes::hex::FromHex;
     use hashes::{Hash, HashEngine};
-    use util::bip341::{Error, Prevouts, ScriptPath, SigHashCache};
+    use util::bip341::{Annex, Error, Prevouts, ScriptPath, SigHashCache};
     use util::taproot::TapSighashHash;
     use {Script, SigHashType, Transaction, TxIn, TxOut};
 
@@ -483,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn test_errors() {
+    fn test_sighash_errors() {
         let dumb_tx = Transaction {
             version: 0,
             lock_time: 0,
@@ -538,20 +562,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_annex_errors() {
+        assert_eq!(Annex::new(&vec![]), Err(Error::WrongAnnex));
+        assert_eq!(Annex::new(&vec![0x51]), Err(Error::WrongAnnex));
+        assert_eq!(Annex::new(&vec![0x51, 0x50]), Err(Error::WrongAnnex));
+    }
+
     fn test_sighash(
         tx_hex: &str,
         prevout_hex: &str,
         input_index: usize,
         expected_hash: &str,
         sighash_type: SigHashType,
-        annex: Option<&str>,
+        annex_hex: Option<&str>,
         script_hex: Option<&str>,
     ) {
         let tx_bytes = Vec::from_hex(tx_hex).unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
         let prevout_bytes = Vec::from_hex(prevout_hex).unwrap();
         let prevouts: Vec<TxOut> = deserialize(&prevout_bytes).unwrap();
-        let annex = annex.map(|a| Vec::from_hex(a).unwrap());
+        let annex_inner;
+        let annex = match annex_hex {
+            Some(annex_hex) => {
+                annex_inner = Vec::from_hex(annex_hex).unwrap();
+                Some(Annex::new(&annex_inner).unwrap())
+            }
+            None => None,
+        };
+
         let script_inner;
         let script_path = match script_hex {
             Some(script_hex) => {
