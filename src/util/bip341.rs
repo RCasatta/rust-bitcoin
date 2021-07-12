@@ -202,7 +202,7 @@ impl<'a> SigHashCache<'a> {
 
         // If hash_type & 3 does not equal SIGHASH_NONE or SIGHASH_SINGLE:
         //     sha_outputs (32): the SHA256 of the serialization of all outputs in CTxOut format.
-        if let SigHashType::All | SigHashType::AllPlusAnyoneCanPay = sighash {
+        if sighash != SigHashType::None && sighash != SigHashType::Single {
             self.hash_outputs().consensus_encode(&mut writer)?;
         }
 
