@@ -27,7 +27,8 @@ use {Script, SigHashType, Transaction, TxOut};
 /// Contains outputs of previous transactions to provide to the [SigHashCache::signature_hash]
 /// method, In the case [SigHashType] variant is `ANYONECANPAY`, [Prevouts::Anyone] may be provided
 pub enum Prevouts {
-    /// When modifier `ANYONECANPAY` is provided, only prevout of the current input is needed
+    /// When modifier `ANYONECANPAY` is provided, only prevout of the current input is needed,
+    /// the first `usize` argument is the input index this [TxOut] is referring to.
     Anyone(usize, TxOut),
     /// When `ANYONECANPAY` is not provided, or the caller is handy giving all prevouts so he can reuse
     /// the same data structure for multiple inputs
