@@ -60,6 +60,9 @@ pub enum Error {
     /// Should never happen since we are always encoding, thus we are avoiding wrap the IO error
     IoError,
 
+    /// Requested input index is greater than the number of inputs in the given transaction
+    IndexGreaterThanInputsSize,
+
     /// There are mismatches in the number of prevouts provided compared with the number of
     /// inputs in the transaction
     PrevoutsSize,
@@ -76,6 +79,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::IoError => write!(f, "IoError"),
+            Error::IndexGreaterThanInputsSize => write!(f, "Requested input index is greater than the number of inputs in the given transaction"),
             Error::PrevoutsSize => write!(f, "Number of supplied prevouts differs from the number of inputs in transaction"),
             Error::PrevoutIndex => write!(f, "The index requested is greater than available prevouts or different from the provided [Provided::Anyone] index"),
             Error::PrevoutKind => write!(f, "A single prevout has been provided but all prevouts are needed without `ANYONECANPAY`")
@@ -156,6 +160,9 @@ impl<'a> SigHashCache<'a> {
             if prevouts.len() != self.tx.input.len() {
                 return Err(Error::PrevoutsSize);
             }
+        }
+        if input_index >= self.tx.input.len() {
+            return Err(Error::IndexGreaterThanInputsSize);
         }
 
         let (sighash, anyone_can_pay) = sighash_type.split_anyonecanpay_flag();
@@ -513,6 +520,16 @@ mod tests {
                 SigHashType::AllPlusAnyoneCanPay
             ),
             Err(Error::PrevoutIndex)
+        );
+        assert_eq!(
+            sig_hash.signature_hash(
+                10,
+                &Prevouts::Anyone(1, &TxOut::default()),
+                None,
+                None,
+                SigHashType::AllPlusAnyoneCanPay
+            ),
+            Err(Error::IndexGreaterThanInputsSize)
         );
     }
 
