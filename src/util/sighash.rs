@@ -23,8 +23,8 @@ use consensus::Encodable;
 use hashes::{sha256, sha256d, Hash};
 use std::{error, fmt, io};
 use util::taproot::{TapLeafHash, TapSighashHash};
-use {Script, SigHashType, Transaction, TxOut};
 use SigHash;
+use {Script, SigHashType, Transaction, TxOut};
 
 /// Efficientlu calculates signature hash message for legacy, segwit and taproot inputs.
 pub struct SigHashCache<'a> {
@@ -318,7 +318,7 @@ impl<'a> SigHashCache<'a> {
     }
 
     /// Compute the BIP341 sighash for any flag type.
-    pub fn taproot_signature_hash(
+    pub fn taproot_sig_hash(
         &mut self,
         input_index: usize,
         prevouts: &Prevouts,
@@ -363,7 +363,9 @@ impl<'a> SigHashCache<'a> {
         }
 
         if !anyone_can_pay && sighash != SigHashType::Single && sighash != SigHashType::None {
-            self.segwit_cache().sequences.consensus_encode(&mut writer)?;
+            self.segwit_cache()
+                .sequences
+                .consensus_encode(&mut writer)?;
         } else {
             zero_hash.consensus_encode(&mut writer)?;
         }
@@ -371,11 +373,15 @@ impl<'a> SigHashCache<'a> {
         {
             let txin = &self.tx.input[input_index];
 
-            txin
-                .previous_output
+            txin.previous_output.consensus_encode(&mut writer)?;
+            prevouts
+                .get(input_index)?
+                .script_pubkey
                 .consensus_encode(&mut writer)?;
-            prevouts.get(input_index)?.script_pubkey.consensus_encode(&mut writer)?;
-            prevouts.get(input_index)?.value.consensus_encode(&mut writer)?;
+            prevouts
+                .get(input_index)?
+                .value
+                .consensus_encode(&mut writer)?;
             txin.sequence.consensus_encode(&mut writer)?;
         }
 
@@ -394,20 +400,17 @@ impl<'a> SigHashCache<'a> {
         Ok(())
     }
 
-    /// Compute the BIP143 sighash for any flag type. See SighashComponents::sighash_all simpler
-    /// API for the most common case
+    /// Compute the BIP143 sighash for any flag type.
     pub fn segwit_signature_hash(
         &mut self,
         input_index: usize,
         prevouts: &Prevouts,
-        sighash_type: SigHashType
-    ) -> SigHash {
+        sighash_type: SigHashType,
+    ) -> Result<SigHash, Error> {
         let mut enc = SigHash::engine();
-        self.segwit_encode_signing_data_to(&mut enc, input_index, prevouts, sighash_type)
-            .expect("engines don't error");
-        SigHash::from_engine(enc)
+        self.segwit_encode_signing_data_to(&mut enc, input_index, prevouts, sighash_type)?;
+        Ok(SigHash::from_engine(enc))
     }
-
 
     fn common_cache(&mut self) -> &CommonCache {
         if self.common_cache.is_none() {
@@ -438,9 +441,15 @@ impl<'a> SigHashCache<'a> {
     fn segwit_cache(&mut self) -> &SegwitCache {
         if self.segwit_cache.is_none() {
             let cache = SegwitCache {
-                prevouts: sha256d::Hash::from_inner( sha256::Hash::hash(&self.common_cache().prevouts).into_inner() ),
-                sequences: sha256d::Hash::from_inner( sha256::Hash::hash(&self.common_cache().sequences).into_inner() ),
-                outputs: sha256d::Hash::from_inner( sha256::Hash::hash(&self.common_cache().outputs).into_inner() ),
+                prevouts: sha256d::Hash::from_inner(
+                    sha256::Hash::hash(&self.common_cache().prevouts).into_inner(),
+                ),
+                sequences: sha256d::Hash::from_inner(
+                    sha256::Hash::hash(&self.common_cache().sequences).into_inner(),
+                ),
+                outputs: sha256d::Hash::from_inner(
+                    sha256::Hash::hash(&self.common_cache().outputs).into_inner(),
+                ),
             };
             self.segwit_cache = Some(cache);
         }
@@ -497,19 +506,19 @@ impl<'a> Annex<'a> {
 #[cfg(test)]
 mod tests {
     use consensus::deserialize;
+    use hash_types::SigHash;
     use hashes::hex::FromHex;
     use hashes::{Hash, HashEngine};
+    use network::constants::Network;
     use std::mem::size_of;
+    use util::address::Address;
+    use util::bip143;
+    use util::ecdsa::PublicKey;
     use util::sighash::{
         Annex, CommonCache, Error, Prevouts, ScriptPath, SegwitCache, SigHashCache, TaprootCache,
     };
     use util::taproot::TapSighashHash;
     use {Script, SigHashType, Transaction, TxIn, TxOut};
-    use hash_types::SigHash;
-    use network::constants::Network;
-    use util::address::Address;
-    use util::ecdsa::PublicKey;
-    use util::bip143;
 
     #[test]
     fn test_tap_sighash_hash() {
@@ -634,53 +643,27 @@ mod tests {
         let mut sig_hash = SigHashCache::new(&dumb_tx);
 
         assert_eq!(
-            sig_hash.taproot_signature_hash(
-                0,
-                &Prevouts::All(&vec![]),
-                None,
-                None,
-                SigHashType::All
-            ),
+            sig_hash.taproot_sig_hash(0, &Prevouts::All(&vec![]), None, None, SigHashType::All),
             Err(Error::PrevoutsSize)
         );
+        let two = vec![TxOut::default(), TxOut::default()];
+        let too_many_prevouts = Prevouts::All(&two);
         assert_eq!(
-            sig_hash.taproot_signature_hash(
-                0,
-                &Prevouts::All(&vec![TxOut::default(), TxOut::default()]),
-                None,
-                None,
-                SigHashType::All
-            ),
+            sig_hash.taproot_sig_hash(0, &too_many_prevouts, None, None, SigHashType::All),
             Err(Error::PrevoutsSize)
         );
+        let tx_out = TxOut::default();
+        let prevout = Prevouts::Anyone(1, &tx_out);
         assert_eq!(
-            sig_hash.taproot_signature_hash(
-                0,
-                &Prevouts::Anyone(1, &TxOut::default()),
-                None,
-                None,
-                SigHashType::All
-            ),
+            sig_hash.taproot_sig_hash(0, &prevout, None, None, SigHashType::All),
             Err(Error::PrevoutKind)
         );
         assert_eq!(
-            sig_hash.taproot_signature_hash(
-                0,
-                &Prevouts::Anyone(1, &TxOut::default()),
-                None,
-                None,
-                SigHashType::AllPlusAnyoneCanPay
-            ),
+            sig_hash.taproot_sig_hash(0, &prevout, None, None, SigHashType::AllPlusAnyoneCanPay),
             Err(Error::PrevoutIndex)
         );
         assert_eq!(
-            sig_hash.taproot_signature_hash(
-                10,
-                &Prevouts::Anyone(1, &TxOut::default()),
-                None,
-                None,
-                SigHashType::AllPlusAnyoneCanPay
-            ),
+            sig_hash.taproot_sig_hash(10, &prevout, None, None, SigHashType::AllPlusAnyoneCanPay),
             Err(Error::IndexGreaterThanInputsSize)
         );
     }
@@ -734,7 +717,7 @@ mod tests {
         let mut sig_hash_cache = SigHashCache::new(&tx);
 
         let hash = sig_hash_cache
-            .taproot_signature_hash(input_index, &prevouts, annex, script_path, sighash_type)
+            .taproot_sig_hash(input_index, &prevouts, annex, script_path, sighash_type)
             .unwrap();
         let expected = Vec::from_hex(expected_hash).unwrap();
         assert_eq!(expected, hash.into_inner());
@@ -749,16 +732,28 @@ mod tests {
         witness_script
     }
 
-    fn run_test_sighash_bip143(tx: &str, script: &str, input_index: usize, value: u64, hash_type: u32, expected_result: &str) {
+    fn run_test_sighash_bip143(
+        tx: &str,
+        script: &str,
+        input_index: usize,
+        value: u64,
+        hash_type: u32,
+        expected_result: &str,
+    ) {
         let tx: Transaction = deserialize(&Vec::<u8>::from_hex(tx).unwrap()[..]).unwrap();
         let script_pubkey = Script::from(Vec::<u8>::from_hex(script).unwrap());
         let raw_expected = SigHash::from_hex(expected_result).unwrap();
         let expected_result = SigHash::from_slice(&raw_expected[..]).unwrap();
         let mut cache = SigHashCache::new(&tx);
         let sighash_type = SigHashType::from_u32_consensus(hash_type);
-        let tx_out = TxOut { value, script_pubkey };
+        let tx_out = TxOut {
+            value,
+            script_pubkey,
+        };
         let prevout = Prevouts::Anyone(input_index, &tx_out);
-        let actual_result = cache.segwit_signature_hash(input_index, &prevout, sighash_type);
+        let actual_result = cache
+            .segwit_signature_hash(input_index, &prevout, sighash_type)
+            .unwrap();
         assert_eq!(actual_result, expected_result);
     }
 
@@ -774,17 +769,25 @@ mod tests {
             ).unwrap()[..],
         ).unwrap();
 
-        let witness_script = p2pkh_hex("025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee6357");
+        let witness_script =
+            p2pkh_hex("025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee6357");
         let value = 600_000_000;
 
         let comp = bip143::SighashComponents::new(&tx);
-        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, "96b827c8483d4e9b96712b6713a7b68d6e8003a781feba36c31143470b4efd37"));
-        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, "52b0a642eea2fb7ae638c36f6252b6750293dbe574a806984b8e4d8548339a3b"));
-        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, "863ef3e1a92afbfdb97f31ad0fc7683ee943e9abcf2501590ff8f6551f47e5e5"));
 
+        let expected = "96b827c8483d4e9b96712b6713a7b68d6e8003a781feba36c31143470b4efd37";
+        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, expected));
+
+        let expected = "52b0a642eea2fb7ae638c36f6252b6750293dbe574a806984b8e4d8548339a3b";
+        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, expected));
+
+        let expected = "863ef3e1a92afbfdb97f31ad0fc7683ee943e9abcf2501590ff8f6551f47e5e5";
+        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, expected));
+
+        let expected = "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670";
         assert_eq!(
             comp.sighash_all(&tx.input[1], &witness_script, value),
-            hex_hash!(SigHash, "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670")
+            hex_hash!(SigHash, expected)
         );
     }
 
@@ -799,17 +802,24 @@ mod tests {
             ).unwrap()[..],
         ).unwrap();
 
-        let witness_script = p2pkh_hex("03ad1d8e89212f0b92c74d23bb710c00662ad1470198ac48c43f7d6f93a2a26873");
+        let witness_script =
+            p2pkh_hex("03ad1d8e89212f0b92c74d23bb710c00662ad1470198ac48c43f7d6f93a2a26873");
         let value = 1_000_000_000;
         let comp = bip143::SighashComponents::new(&tx);
 
-        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, "b0287b4a252ac05af83d2dcef00ba313af78a3e9c329afa216eb3aa2a7b4613a"));
-        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, "18606b350cd8bf565266bc352f0caddcf01e8fa789dd8a15386327cf8cabe198"));
-        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, "de984f44532e2173ca0d64314fcefe6d30da6f8cf27bafa706da61df8a226c83"));
+        let expected = "b0287b4a252ac05af83d2dcef00ba313af78a3e9c329afa216eb3aa2a7b4613a";
+        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, expected));
 
+        let expected = "18606b350cd8bf565266bc352f0caddcf01e8fa789dd8a15386327cf8cabe198";
+        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, expected));
+
+        let expected = "de984f44532e2173ca0d64314fcefe6d30da6f8cf27bafa706da61df8a226c83";
+        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, expected));
+
+        let expected = "64f3b0f4dd2bb3aa1ce8566d220cc74dda9df97d8490cc81d89d735c92e59fb6";
         assert_eq!(
             comp.sighash_all(&tx.input[0], &witness_script, value),
-            hex_hash!(SigHash, "64f3b0f4dd2bb3aa1ce8566d220cc74dda9df97d8490cc81d89d735c92e59fb6")
+            hex_hash!(SigHash, expected)
         );
     }
 
@@ -834,13 +844,20 @@ mod tests {
         let value = 987654321;
 
         let comp = bip143::SighashComponents::new(&tx);
-        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, "74afdc312af5183c4198a40ca3c1a275b485496dd3929bca388c4b5e31f7aaa0"));
-        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, "3bb13029ce7b1f559ef5e747fcac439f1455a2ec7c5f09b72290795e70665044"));
-        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, "bc4d309071414bed932f98832b27b4d76dad7e6c1346f487a8fdbb8eb90307cc"));
 
+        let expected = "74afdc312af5183c4198a40ca3c1a275b485496dd3929bca388c4b5e31f7aaa0";
+        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, expected));
+
+        let expected = "3bb13029ce7b1f559ef5e747fcac439f1455a2ec7c5f09b72290795e70665044";
+        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, expected));
+
+        let expected = "bc4d309071414bed932f98832b27b4d76dad7e6c1346f487a8fdbb8eb90307cc";
+        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, expected));
+
+        let expected = "185c0be5263dce5b4bb50a047973c1b6272bfbd0103a89444597dc40b248ee7c";
         assert_eq!(
             comp.sighash_all(&tx.input[0], &witness_script, value),
-            hex_hash!(SigHash, "185c0be5263dce5b4bb50a047973c1b6272bfbd0103a89444597dc40b248ee7c")
+            hex_hash!(SigHash, expected)
         );
     }
     #[test]
@@ -848,11 +865,24 @@ mod tests {
         // All examples generated via Bitcoin Core RPC using signrawtransactionwithwallet
         // with additional debug printing
         let tx_hex = "0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000";
-        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x01, "0a1bc2758dbb5b3a56646f8cafbf63f410cc62b77a482f8b87552683300a7711");
-        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x02, "3e275ac8b084f79f756dcd535bffb615cc94a685eefa244d9031eaf22e4cec12");
-        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x03, "191a08165ffacc3ea55753b225f323c35fd00d9cc0268081a4a501921fc6ec14");
-        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x81, "4b6b612530f94470bbbdef18f57f2990d56b239f41b8728b9a49dc8121de4559");
-        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x82, "a7e916d3acd4bb97a21e6793828279aeab02162adf8099ea4f309af81f3d5adb");
-        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x83, "d9276e2a48648ddb53a4aaa58314fc2b8067c13013e1913ffb67e0988ce82c78");
+        let script_hex = "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac";
+
+        let expected = "0a1bc2758dbb5b3a56646f8cafbf63f410cc62b77a482f8b87552683300a7711";
+        run_test_sighash_bip143(tx_hex, script_hex, 0, 1648888940, 0x01, expected);
+
+        let expected = "3e275ac8b084f79f756dcd535bffb615cc94a685eefa244d9031eaf22e4cec12";
+        run_test_sighash_bip143(tx_hex, script_hex, 0, 1648888940, 0x02, expected);
+
+        let expected = "191a08165ffacc3ea55753b225f323c35fd00d9cc0268081a4a501921fc6ec14";
+        run_test_sighash_bip143(tx_hex, script_hex, 0, 1648888940, 0x03, expected);
+
+        let expected = "4b6b612530f94470bbbdef18f57f2990d56b239f41b8728b9a49dc8121de4559";
+        run_test_sighash_bip143(tx_hex, script_hex, 0, 1648888940, 0x81, expected);
+
+        let expected = "a7e916d3acd4bb97a21e6793828279aeab02162adf8099ea4f309af81f3d5adb";
+        run_test_sighash_bip143(tx_hex, script_hex, 0, 1648888940, 0x82, expected);
+
+        let expected = "d9276e2a48648ddb53a4aaa58314fc2b8067c13013e1913ffb67e0988ce82c78";
+        run_test_sighash_bip143(tx_hex, script_hex, 0, 1648888940, 0x83, expected);
     }
 }
