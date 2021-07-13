@@ -12,17 +12,19 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! BIP341 Implementation
+//! Generalized, efficient, signature Hash Implementation
 //!
-//! Implementation of [Bip341](https://github.com/bitcoin/bips/blob/150ab6f5c3aca9da05fccc5b435e9667853407f4/bip-0341.mediawiki)
-//! signature message
+//! Implementation of the algorithm to compute the message to be signed according to [Bip341](https://github.com/bitcoin/bips/blob/150ab6f5c3aca9da05fccc5b435e9667853407f4/bip-0341.mediawiki),
+//! [Bip143](https://github.com/bitcoin/bips/blob/99701f68a88ce33b2d0838eb84e115cef505b4c2/bip-0143.mediawiki)
+//! and legacy
 //!
 
 use consensus::Encodable;
-use hashes::{sha256, Hash};
+use hashes::{sha256, sha256d, Hash};
 use std::{error, fmt, io};
 use util::taproot::{TapLeafHash, TapSighashHash};
 use {Script, SigHashType, Transaction, TxOut};
+use SigHash;
 
 /// Efficientlu calculates signature hash message for legacy, segwit and taproot inputs.
 pub struct SigHashCache<'a> {
@@ -32,23 +34,35 @@ pub struct SigHashCache<'a> {
     /// Common cache for taproot and segwit inputs. It's an option because it's not needed for legacy inputs
     common_cache: Option<CommonCache>,
 
+    /// Cache for segwit v0 inputs, it's the result of another round of sha256 to `common_cache`
+    segwit_cache: Option<SegwitCache>,
+
     /// Cache for taproot v1 inputs
     taproot_cache: Option<TaprootCache>,
 }
 
+/// values cached common between segwit and taproot inputs
 pub struct CommonCache {
     prevouts: sha256::Hash,
     sequences: sha256::Hash,
     outputs: sha256::Hash, // maybe Option since NONE and SINGLE doesn't need it
 }
 
+/// values cached for segwit inputs, it's equal to [CommonCache] plus another round of `sha256`
+pub struct SegwitCache {
+    prevouts: sha256d::Hash,
+    sequences: sha256d::Hash,
+    outputs: sha256d::Hash,
+}
+
+/// values cached for taproot inputs
 pub struct TaprootCache {
     amounts: sha256::Hash,
     script_pubkeys: sha256::Hash,
 }
 
-/// Contains outputs of previous transactions to provide to the [SigHashCache::signature_hash]
-/// method, In the case [SigHashType] variant is `ANYONECANPAY`, [Prevouts::Anyone] may be provided
+/// Contains outputs of previous transactions.
+/// In the case [SigHashType] variant is `ANYONECANPAY`, [Prevouts::Anyone] may be provided
 pub enum Prevouts<'u> {
     /// When modifier `ANYONECANPAY` is provided, only prevout of the current input is needed,
     /// the first `usize` argument is the input index this [TxOut] is referring to.
@@ -153,6 +167,7 @@ impl<'a> SigHashCache<'a> {
             tx,
             common_cache: None,
             taproot_cache: None,
+            segwit_cache: None,
         }
     }
 
@@ -310,6 +325,77 @@ impl<'a> SigHashCache<'a> {
         Ok(TapSighashHash::from_engine(enc))
     }
 
+
+    /// Encode the BIP143 signing data for any flag type into a given object implementing a
+    /// [std::io::Write] trait.
+    pub fn segwit_encode_signing_data_to<Write: io::Write>(
+        &mut self,
+        mut writer: Write,
+        input_index: usize,
+        script_code: &Script,
+        value: u64,
+        sighash_type: SigHashType,
+    ) -> Result<(), Error> {
+        let zero_hash = sha256d::Hash::default();
+
+        let (sighash, anyone_can_pay) = sighash_type.split_anyonecanpay_flag();
+
+        self.tx.version.consensus_encode(&mut writer)?;
+
+        if !anyone_can_pay {
+            self.segwit_cache().prevouts.consensus_encode(&mut writer)?;
+        } else {
+            zero_hash.consensus_encode(&mut writer)?;
+        }
+
+        if !anyone_can_pay && sighash != SigHashType::Single && sighash != SigHashType::None {
+            self.segwit_cache().sequences.consensus_encode(&mut writer)?;
+        } else {
+            zero_hash.consensus_encode(&mut writer)?;
+        }
+
+        {
+            let txin = &self.tx.input[input_index];
+
+            txin
+                .previous_output
+                .consensus_encode(&mut writer)?;
+            script_code.consensus_encode(&mut writer)?;
+            value.consensus_encode(&mut writer)?;
+            txin.sequence.consensus_encode(&mut writer)?;
+        }
+
+        if sighash != SigHashType::Single && sighash != SigHashType::None {
+            self.segwit_cache().outputs.consensus_encode(&mut writer)?;
+        } else if sighash == SigHashType::Single && input_index < self.tx.output.len() {
+            let mut single_enc = SigHash::engine();
+            self.tx.output[input_index].consensus_encode(&mut single_enc)?;
+            SigHash::from_engine(single_enc).consensus_encode(&mut writer)?;
+        } else {
+            zero_hash.consensus_encode(&mut writer)?;
+        }
+
+        self.tx.lock_time.consensus_encode(&mut writer)?;
+        sighash_type.as_u32().consensus_encode(&mut writer)?;
+        Ok(())
+    }
+
+    /// Compute the BIP143 sighash for any flag type. See SighashComponents::sighash_all simpler
+    /// API for the most common case
+    pub fn segwit_signature_hash(
+        &mut self,
+        input_index: usize,
+        script_code: &Script,
+        value: u64,
+        sighash_type: SigHashType
+    ) -> SigHash {
+        let mut enc = SigHash::engine();
+        self.segwit_encode_signing_data_to(&mut enc, input_index, script_code, value, sighash_type)
+            .expect("engines don't error");
+        SigHash::from_engine(enc)
+    }
+
+
     fn common_cache(&mut self) -> &CommonCache {
         if self.common_cache.is_none() {
             let mut enc_prevouts = sha256::Hash::engine();
@@ -334,6 +420,18 @@ impl<'a> SigHashCache<'a> {
             self.common_cache = Some(cache);
         }
         self.common_cache.as_ref().unwrap() // safe to unwrap because we checked is_none()
+    }
+
+    fn segwit_cache(&mut self) -> &SegwitCache {
+        if self.segwit_cache.is_none() {
+            let cache = SegwitCache {
+                prevouts: sha256d::Hash::from_inner( sha256::Hash::hash(&self.common_cache().prevouts).into_inner() ),
+                sequences: sha256d::Hash::from_inner( sha256::Hash::hash(&self.common_cache().sequences).into_inner() ),
+                outputs: sha256d::Hash::from_inner( sha256::Hash::hash(&self.common_cache().outputs).into_inner() ),
+            };
+            self.segwit_cache = Some(cache);
+        }
+        self.segwit_cache.as_ref().unwrap() // safe to unwrap because we checked is_none()
     }
 
     fn taproot_cache(&mut self, prevouts: &[TxOut]) -> &TaprootCache {
@@ -389,8 +487,8 @@ mod tests {
     use hashes::hex::FromHex;
     use hashes::{Hash, HashEngine};
     use std::mem::size_of;
-    use util::bip341::{
-        Annex, CommonCache, Error, Prevouts, ScriptPath, SigHashCache, TaprootCache,
+    use util::sighash::{
+        Annex, CommonCache, Error, Prevouts, ScriptPath, SegwitCache, SigHashCache, TaprootCache,
     };
     use util::taproot::TapSighashHash;
     use {Script, SigHashType, Transaction, TxIn, TxOut};
@@ -463,8 +561,9 @@ mod tests {
     fn sizeof() {
         assert_eq!(size_of::<Option<CommonCache>>(), 97);
         assert_eq!(size_of::<Option<TaprootCache>>(), 65);
+        assert_eq!(size_of::<Option<SegwitCache>>(), 97);
         assert_eq!(size_of::<&Transaction>(), 8);
-        assert_eq!(size_of::<SigHashCache>(), 176);
+        assert_eq!(size_of::<SigHashCache>(), 272);
     }
 
     #[test]
@@ -621,5 +720,126 @@ mod tests {
             .unwrap();
         let expected = Vec::from_hex(expected_hash).unwrap();
         assert_eq!(expected, hash.into_inner());
+    }
+
+
+
+
+
+    use hash_types::SigHash;
+    use network::constants::Network;
+    use util::address::Address;
+    use util::ecdsa::PublicKey;
+    use util::bip143;
+
+    fn p2pkh_hex(pk: &str) -> Script {
+        let pk = Vec::from_hex(pk).unwrap();
+        let pk = PublicKey::from_slice(pk.as_slice()).unwrap();
+        let witness_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+        witness_script
+    }
+
+    fn run_test_sighash_bip143(tx: &str, script: &str, input_index: usize, value: u64, hash_type: u32, expected_result: &str) {
+        let tx: Transaction = deserialize(&Vec::<u8>::from_hex(tx).unwrap()[..]).unwrap();
+        let script = Script::from(Vec::<u8>::from_hex(script).unwrap());
+        let raw_expected = SigHash::from_hex(expected_result).unwrap();
+        let expected_result = SigHash::from_slice(&raw_expected[..]).unwrap();
+        let mut cache = SigHashCache::new(&tx);
+        let sighash_type = SigHashType::from_u32_consensus(hash_type);
+        let actual_result = cache.segwit_signature_hash(input_index, &script, value, sighash_type);
+        assert_eq!(actual_result, expected_result);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn bip143_p2wpkh() {
+        let tx = deserialize::<Transaction>(
+            &Vec::from_hex(
+                "0100000002fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f000000\
+                0000eeffffffef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a01000000\
+                00ffffffff02202cb206000000001976a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac9093\
+                510d000000001976a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac11000000",
+            ).unwrap()[..],
+        ).unwrap();
+
+        let witness_script = p2pkh_hex("025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee6357");
+        let value = 600_000_000;
+
+        let comp = bip143::SighashComponents::new(&tx);
+        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, "96b827c8483d4e9b96712b6713a7b68d6e8003a781feba36c31143470b4efd37"));
+        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, "52b0a642eea2fb7ae638c36f6252b6750293dbe574a806984b8e4d8548339a3b"));
+        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, "863ef3e1a92afbfdb97f31ad0fc7683ee943e9abcf2501590ff8f6551f47e5e5"));
+
+        assert_eq!(
+            comp.sighash_all(&tx.input[1], &witness_script, value),
+            hex_hash!(SigHash, "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670")
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn bip143_p2wpkh_nested_in_p2sh() {
+        let tx = deserialize::<Transaction>(
+            &Vec::from_hex(
+                "0100000001db6b1b20aa0fd7b23880be2ecbd4a98130974cf4748fb66092ac4d3ceb1a5477010000\
+                0000feffffff02b8b4eb0b000000001976a914a457b684d7f0d539a46a45bbc043f35b59d0d96388ac00\
+                08af2f000000001976a914fd270b1ee6abcaea97fea7ad0402e8bd8ad6d77c88ac92040000",
+            ).unwrap()[..],
+        ).unwrap();
+
+        let witness_script = p2pkh_hex("03ad1d8e89212f0b92c74d23bb710c00662ad1470198ac48c43f7d6f93a2a26873");
+        let value = 1_000_000_000;
+        let comp = bip143::SighashComponents::new(&tx);
+
+        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, "b0287b4a252ac05af83d2dcef00ba313af78a3e9c329afa216eb3aa2a7b4613a"));
+        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, "18606b350cd8bf565266bc352f0caddcf01e8fa789dd8a15386327cf8cabe198"));
+        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, "de984f44532e2173ca0d64314fcefe6d30da6f8cf27bafa706da61df8a226c83"));
+
+        assert_eq!(
+            comp.sighash_all(&tx.input[0], &witness_script, value),
+            hex_hash!(SigHash, "64f3b0f4dd2bb3aa1ce8566d220cc74dda9df97d8490cc81d89d735c92e59fb6")
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn bip143_p2wsh_nested_in_p2sh() {
+        let tx = deserialize::<Transaction>(
+            &Vec::from_hex(
+                "010000000136641869ca081e70f394c6948e8af409e18b619df2ed74aa106c1ca29787b96e0100000000\
+             ffffffff0200e9a435000000001976a914389ffce9cd9ae88dcc0631e88a821ffdbe9bfe2688acc0832f\
+             05000000001976a9147480a33f950689af511e6e84c138dbbd3c3ee41588ac00000000").unwrap()[..],
+        ).unwrap();
+
+        let witness_script = hex_script!(
+            "56210307b8ae49ac90a048e9b53357a2354b3334e9c8bee813ecb98e99a7e07e8c3ba32103b28f0c28\
+             bfab54554ae8c658ac5c3e0ce6e79ad336331f78c428dd43eea8449b21034b8113d703413d57761b8b\
+             9781957b8c0ac1dfe69f492580ca4195f50376ba4a21033400f6afecb833092a9a21cfdf1ed1376e58\
+             c5d1f47de74683123987e967a8f42103a6d48b1131e94ba04d9737d61acdaa1322008af9602b3b1486\
+             2c07a1789aac162102d8b661b0b3302ee2f162b09e07a55ad5dfbe673a9f01d9f0c19617681024306b\
+             56ae"
+        );
+        let value = 987654321;
+
+        let comp = bip143::SighashComponents::new(&tx);
+        assert_eq!(comp.hash_prevouts, hex_hash!(SigHash, "74afdc312af5183c4198a40ca3c1a275b485496dd3929bca388c4b5e31f7aaa0"));
+        assert_eq!(comp.hash_sequence, hex_hash!(SigHash, "3bb13029ce7b1f559ef5e747fcac439f1455a2ec7c5f09b72290795e70665044"));
+        assert_eq!(comp.hash_outputs, hex_hash!(SigHash, "bc4d309071414bed932f98832b27b4d76dad7e6c1346f487a8fdbb8eb90307cc"));
+
+        assert_eq!(
+            comp.sighash_all(&tx.input[0], &witness_script, value),
+            hex_hash!(SigHash, "185c0be5263dce5b4bb50a047973c1b6272bfbd0103a89444597dc40b248ee7c")
+        );
+    }
+    #[test]
+    fn bip143_sighash_flags() {
+        // All examples generated via Bitcoin Core RPC using signrawtransactionwithwallet
+        // with additional debug printing
+        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x01, "0a1bc2758dbb5b3a56646f8cafbf63f410cc62b77a482f8b87552683300a7711");
+        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x02, "3e275ac8b084f79f756dcd535bffb615cc94a685eefa244d9031eaf22e4cec12");
+        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x03, "191a08165ffacc3ea55753b225f323c35fd00d9cc0268081a4a501921fc6ec14");
+        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x81, "4b6b612530f94470bbbdef18f57f2990d56b239f41b8728b9a49dc8121de4559");
+        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x82, "a7e916d3acd4bb97a21e6793828279aeab02162adf8099ea4f309af81f3d5adb");
+        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x83, "d9276e2a48648ddb53a4aaa58314fc2b8067c13013e1913ffb67e0988ce82c78");
     }
 }

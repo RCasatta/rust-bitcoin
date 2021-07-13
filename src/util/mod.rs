@@ -32,7 +32,7 @@ pub mod psbt;
 pub mod taproot;
 pub mod uint;
 pub mod bip158;
-pub mod bip341;
+pub mod sighash;
 
 pub(crate) mod endian;
 
