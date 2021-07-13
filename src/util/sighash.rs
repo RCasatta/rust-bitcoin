@@ -72,6 +72,17 @@ pub enum Prevouts<'u> {
     All(&'u [TxOut]),
 }
 
+impl<'u> Prevouts<'u> {
+    fn check_all(&self, tx: &Transaction) -> Result<(), Error> {
+        if let Prevouts::All(prevouts) = self {
+            if prevouts.len() != tx.input.len() {
+                return Err(Error::PrevoutsSize);
+            }
+        }
+        Ok(())
+    }
+}
+
 const LEAF_VERSION_TAPSCRIPT: u8 = 0xc0;
 
 /// Information related to the script path spending
@@ -171,6 +182,14 @@ impl<'a> SigHashCache<'a> {
         }
     }
 
+    fn check_index(&self, index: usize) -> Result<(), Error> {
+        if index >= self.tx.input.len() {
+            Err(Error::IndexGreaterThanInputsSize)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Encode the BIP341 signing data for any flag type into a given object implementing a
     /// std::io::Write trait.
     pub fn taproot_encode_signing_data_to<Write: io::Write>(
@@ -182,14 +201,8 @@ impl<'a> SigHashCache<'a> {
         script_path: Option<ScriptPath>,
         sighash_type: SigHashType,
     ) -> Result<(), Error> {
-        if let Prevouts::All(prevouts) = prevouts {
-            if prevouts.len() != self.tx.input.len() {
-                return Err(Error::PrevoutsSize);
-            }
-        }
-        if input_index >= self.tx.input.len() {
-            return Err(Error::IndexGreaterThanInputsSize);
-        }
+        prevouts.check_all(&self.tx)?;
+        self.check_index(input_index)?;
 
         let (sighash, anyone_can_pay) = sighash_type.split_anyonecanpay_flag();
 
@@ -325,17 +338,18 @@ impl<'a> SigHashCache<'a> {
         Ok(TapSighashHash::from_engine(enc))
     }
 
-
     /// Encode the BIP143 signing data for any flag type into a given object implementing a
     /// [std::io::Write] trait.
     pub fn segwit_encode_signing_data_to<Write: io::Write>(
         &mut self,
         mut writer: Write,
         input_index: usize,
-        script_code: &Script,
-        value: u64,
+        prevouts: &Prevouts,
         sighash_type: SigHashType,
     ) -> Result<(), Error> {
+        prevouts.check_all(&self.tx)?;
+        self.check_index(input_index)?;
+
         let zero_hash = sha256d::Hash::default();
 
         let (sighash, anyone_can_pay) = sighash_type.split_anyonecanpay_flag();
@@ -360,8 +374,8 @@ impl<'a> SigHashCache<'a> {
             txin
                 .previous_output
                 .consensus_encode(&mut writer)?;
-            script_code.consensus_encode(&mut writer)?;
-            value.consensus_encode(&mut writer)?;
+            prevouts.get(input_index)?.script_pubkey.consensus_encode(&mut writer)?;
+            prevouts.get(input_index)?.value.consensus_encode(&mut writer)?;
             txin.sequence.consensus_encode(&mut writer)?;
         }
 
@@ -385,12 +399,11 @@ impl<'a> SigHashCache<'a> {
     pub fn segwit_signature_hash(
         &mut self,
         input_index: usize,
-        script_code: &Script,
-        value: u64,
+        prevouts: &Prevouts,
         sighash_type: SigHashType
     ) -> SigHash {
         let mut enc = SigHash::engine();
-        self.segwit_encode_signing_data_to(&mut enc, input_index, script_code, value, sighash_type)
+        self.segwit_encode_signing_data_to(&mut enc, input_index, prevouts, sighash_type)
             .expect("engines don't error");
         SigHash::from_engine(enc)
     }
@@ -492,6 +505,11 @@ mod tests {
     };
     use util::taproot::TapSighashHash;
     use {Script, SigHashType, Transaction, TxIn, TxOut};
+    use hash_types::SigHash;
+    use network::constants::Network;
+    use util::address::Address;
+    use util::ecdsa::PublicKey;
+    use util::bip143;
 
     #[test]
     fn test_tap_sighash_hash() {
@@ -508,7 +526,7 @@ mod tests {
     #[test]
     fn test_sighashes_keyspending() {
         // following test case has been taken from bitcoin core test framework
-        test_sighash(
+        test_taproot_sighash(
             "0200000002fff49be59befe7566050737910f6ccdc5e749c7f8860ddc140386463d88c5ad0f3000000002cf68eb4a3d67f9d4c079249f7e4f27b8854815cb1ed13842d4fbf395f9e217fd605ee24090100000065235d9203f458520000000000160014b6d48333bb13b4c644e57c43a9a26df3a44b785e58020000000000001976a914eea9461a9e1e3f765d3af3e726162e0229fe3eb688ac58020000000000001976a9143a8869c9f2b5ea1d4ff3aeeb6a8fb2fffb1ad5fe88ac0ad7125c",
             "02591f220000000000225120f25ad35583ea31998d968871d7de1abd2a52f6fe4178b54ea158274806ff4ece48fb310000000000225120f25ad35583ea31998d968871d7de1abd2a52f6fe4178b54ea158274806ff4ece",
             1,
@@ -516,7 +534,7 @@ mod tests {
             SigHashType::All, None,None,
         );
 
-        test_sighash(
+        test_taproot_sighash(
             "0200000001350005f65aa830ced2079df348e2d8c2bdb4f10e2dde6a161d8a07b40d1ad87dae000000001611d0d603d9dc0e000000000017a914459b6d7d6bbb4d8837b4bf7e9a4556f952da2f5c8758020000000000001976a9141dd70e1299ffc2d5b51f6f87de9dfe9398c33cbb88ac58020000000000001976a9141dd70e1299ffc2d5b51f6f87de9dfe9398c33cbb88aca71c1f4f",
             "01c4811000000000002251201bf9297d0a2968ae6693aadd0fa514717afefd218087a239afb7418e2d22e65c",
             0,
@@ -524,7 +542,7 @@ mod tests {
             SigHashType::AllPlusAnyoneCanPay, None,None,
         );
 
-        test_sighash(
+        test_taproot_sighash(
             "020000000185bed1a6da2bffbd60ec681a1bfb71c5111d6395b99b3f8b2bf90167111bcb18f5010000007c83ace802ded24a00000000001600142c4698f9f7a773866879755aa78c516fb332af8e5802000000000000160014d38639dfbac4259323b98a472405db0c461b31fa61073747",
             "0144c84d0000000000225120e3f2107989c88e67296ab2faca930efa2e3a5bd3ff0904835a11c9e807458621",
             0,
@@ -532,7 +550,7 @@ mod tests {
             SigHashType::None, None,None,
         );
 
-        test_sighash(
+        test_taproot_sighash(
             "eb93dbb901028c8515589dac980b6e7f8e4088b77ed866ca0d6d210a7218b6fd0f6b22dd6d7300000000eb4740a9047efc0e0000000000160014913da2128d8fcf292b3691db0e187414aa1783825802000000000000160014913da2128d8fcf292b3691db0e187414aa178382580200000000000017a9143dd27f01c6f7ef9bb9159937b17f17065ed01a0c875802000000000000160014d7630e19df70ada9905ede1722b800c0005f246641000000",
             "013fed110000000000225120eb536ae8c33580290630fc495046e998086a64f8f33b93b07967d9029b265c55",
             0,
@@ -540,7 +558,7 @@ mod tests {
             SigHashType::NonePlusAnyoneCanPay, None,None,
         );
 
-        test_sighash(
+        test_taproot_sighash(
             "02000000017836b409a5fed32211407e44b971591f2032053f14701fb5b3a30c0ff382f2cc9c0100000061ac55f60288fb5600000000001976a9144ea02f6f182b082fb6ce47e36bbde390b6a41b5088ac58020000000000001976a9144ea02f6f182b082fb6ce47e36bbde390b6a41b5088ace4000000",
             "01efa558000000000022512007071ea3dc7e331b0687d0193d1e6d6ed10e645ef36f10ef8831d5e522ac9e80",
             0,
@@ -548,7 +566,7 @@ mod tests {
             SigHashType::Single, None,None,
         );
 
-        test_sighash(
+        test_taproot_sighash(
             "0100000001aa6deae89d5e0aaca58714fc76ef6f3c8284224888089232d4e663843ed3ab3eae010000008b6657a60450cb4c0000000000160014a3d42b5413ef0c0701c4702f3cd7d4df222c147058020000000000001976a91430b4ed8723a4ee8992aa2c8814cfe5c3ad0ab9d988ac5802000000000000160014365b1166a6ed0a5e8e9dff17a6d00bbb43454bc758020000000000001976a914bc98c51a84fe7fad5dc380eb8b39586eff47241688ac4f313247",
             "0107af4e00000000002251202c36d243dfc06cb56a248e62df27ecba7417307511a81ae61aa41c597a929c69",
             0,
@@ -568,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_sighashes_with_annex() {
-        test_sighash(
+        test_taproot_sighash(
             "0200000001df8123752e8f37d132c4e9f1ff7e4f9b986ade9211267e9ebd5fd22a5e718dec6d01000000ce4023b903cb7b23000000000017a914a18b36ea7a094db2f4940fc09edf154e86de7bd787580200000000000017a914afd0d512a2c5c2b40e25669e9cc460303c325b8b87580200000000000017a914a18b36ea7a094db2f4940fc09edf154e86de7bd787f6020000",
             "01ea49260000000000225120ab5e9800806bf18cb246edcf5fe63441208fe955a4b5a35bbff65f5db622a010",
             0,
@@ -581,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_sighashes_with_script_path() {
-        test_sighash(
+        test_taproot_sighash(
             "020000000189fc651483f9296b906455dd939813bf086b1bbe7c77635e157c8e14ae29062195010000004445b5c7044561320000000000160014331414dbdada7fb578f700f38fb69995fc9b5ab958020000000000001976a914268db0a8104cc6d8afd91233cc8b3d1ace8ac3ef88ac580200000000000017a914ec00dcb368d6a693e11986d265f659d2f59e8be2875802000000000000160014c715799a49a0bae3956df9c17cb4440a673ac0df6f010000",
             "011bec34000000000022512028055142ea437db73382e991861446040b61dd2185c4891d7daf6893d79f7182",
             0,
@@ -594,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_sighashes_with_annex_and_script() {
-        test_sighash(
+        test_taproot_sighash(
             "020000000132fb72cb8fba496755f027a9743e2d698c831fdb8304e4d1a346ac92cbf51acba50100000026bdc7df044aad34000000000017a9144fa2554ed6174586854fa3bc01de58dcf33567d0875802000000000000160014950367e1e62cdf240b35b883fc2f5e39f0eb9ab95802000000000000160014950367e1e62cdf240b35b883fc2f5e39f0eb9ab958020000000000001600141b31217d48ccc8760dcc0710fade5866d628e733a02d5122",
             "011458360000000000225120a7baec3fb9f84614e3899fcc010c638f80f13539344120e1f4d8b68a9a011a13",
             0,
@@ -674,7 +692,7 @@ mod tests {
         assert_eq!(Annex::new(&vec![0x51, 0x50]), Err(Error::WrongAnnex));
     }
 
-    fn test_sighash(
+    fn test_taproot_sighash(
         tx_hex: &str,
         prevout_hex: &str,
         input_index: usize,
@@ -722,15 +740,7 @@ mod tests {
         assert_eq!(expected, hash.into_inner());
     }
 
-
-
-
-
-    use hash_types::SigHash;
-    use network::constants::Network;
-    use util::address::Address;
-    use util::ecdsa::PublicKey;
-    use util::bip143;
+    // segwit v0 tests
 
     fn p2pkh_hex(pk: &str) -> Script {
         let pk = Vec::from_hex(pk).unwrap();
@@ -741,12 +751,14 @@ mod tests {
 
     fn run_test_sighash_bip143(tx: &str, script: &str, input_index: usize, value: u64, hash_type: u32, expected_result: &str) {
         let tx: Transaction = deserialize(&Vec::<u8>::from_hex(tx).unwrap()[..]).unwrap();
-        let script = Script::from(Vec::<u8>::from_hex(script).unwrap());
+        let script_pubkey = Script::from(Vec::<u8>::from_hex(script).unwrap());
         let raw_expected = SigHash::from_hex(expected_result).unwrap();
         let expected_result = SigHash::from_slice(&raw_expected[..]).unwrap();
         let mut cache = SigHashCache::new(&tx);
         let sighash_type = SigHashType::from_u32_consensus(hash_type);
-        let actual_result = cache.segwit_signature_hash(input_index, &script, value, sighash_type);
+        let tx_out = TxOut { value, script_pubkey };
+        let prevout = Prevouts::Anyone(input_index, &tx_out);
+        let actual_result = cache.segwit_signature_hash(input_index, &prevout, sighash_type);
         assert_eq!(actual_result, expected_result);
     }
 
@@ -835,11 +847,12 @@ mod tests {
     fn bip143_sighash_flags() {
         // All examples generated via Bitcoin Core RPC using signrawtransactionwithwallet
         // with additional debug printing
-        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x01, "0a1bc2758dbb5b3a56646f8cafbf63f410cc62b77a482f8b87552683300a7711");
-        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x02, "3e275ac8b084f79f756dcd535bffb615cc94a685eefa244d9031eaf22e4cec12");
-        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x03, "191a08165ffacc3ea55753b225f323c35fd00d9cc0268081a4a501921fc6ec14");
-        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x81, "4b6b612530f94470bbbdef18f57f2990d56b239f41b8728b9a49dc8121de4559");
-        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x82, "a7e916d3acd4bb97a21e6793828279aeab02162adf8099ea4f309af81f3d5adb");
-        run_test_sighash_bip143("0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000", "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x83, "d9276e2a48648ddb53a4aaa58314fc2b8067c13013e1913ffb67e0988ce82c78");
+        let tx_hex = "0200000001cf309ee0839b8aaa3fbc84f8bd32e9c6357e99b49bf6a3af90308c68e762f1d70100000000feffffff0288528c61000000001600146e8d9e07c543a309dcdeba8b50a14a991a658c5be0aebb0000000000160014698d8419804a5d5994704d47947889ff7620c004db000000";
+        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x01, "0a1bc2758dbb5b3a56646f8cafbf63f410cc62b77a482f8b87552683300a7711");
+        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x02, "3e275ac8b084f79f756dcd535bffb615cc94a685eefa244d9031eaf22e4cec12");
+        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x03, "191a08165ffacc3ea55753b225f323c35fd00d9cc0268081a4a501921fc6ec14");
+        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x81, "4b6b612530f94470bbbdef18f57f2990d56b239f41b8728b9a49dc8121de4559");
+        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x82, "a7e916d3acd4bb97a21e6793828279aeab02162adf8099ea4f309af81f3d5adb");
+        run_test_sighash_bip143(tx_hex, "76a91462744660c6b5133ddeaacbc57d2dc2d7b14d0b0688ac", 0, 1648888940, 0x83, "d9276e2a48648ddb53a4aaa58314fc2b8067c13013e1913ffb67e0988ce82c78");
     }
 }
