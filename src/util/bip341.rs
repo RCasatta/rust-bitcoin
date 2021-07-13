@@ -24,6 +24,29 @@ use std::{error, fmt, io};
 use util::taproot::{TapLeafHash, TapSighashHash};
 use {Script, SigHashType, Transaction, TxOut};
 
+/// Efficientlu calculates signature hash message for legacy, segwit and taproot inputs.
+pub struct SigHashCache<'a> {
+    /// Access to transaction required for various introspection
+    tx: &'a Transaction,
+
+    /// Common cache for taproot and segwit inputs. It's an option because it's not needed for legacy inputs
+    common_cache: Option<CommonCache>,
+
+    /// Cache for taproot v1 inputs
+    taproot_cache: Option<TaprootCache>,
+}
+
+pub struct CommonCache {
+    prevouts: sha256::Hash,
+    sequences: sha256::Hash,
+    outputs: sha256::Hash, // maybe Option since NONE and SINGLE doesn't need it
+}
+
+pub struct TaprootCache {
+    amounts: sha256::Hash,
+    script_pubkeys: sha256::Hash,
+}
+
 /// Contains outputs of previous transactions to provide to the [SigHashCache::signature_hash]
 /// method, In the case [SigHashType] variant is `ANYONECANPAY`, [Prevouts::Anyone] may be provided
 pub enum Prevouts<'u> {
@@ -120,24 +143,6 @@ impl<'u> Prevouts<'u> {
     }
 }
 
-/// A replacement for SigHashComponents which supports all sighash modes
-pub struct SigHashCache<'a> {
-    /// Access to transaction required for various introspection
-    tx: &'a Transaction,
-
-    /// Hash of all the previous outputs, computed as required
-    hash_prevouts: Option<sha256::Hash>,
-    /// Hash of all the input sequence nos, computed as required
-    hash_sequence: Option<sha256::Hash>,
-    /// Hash of all the outputs in this transaction, computed as required
-    hash_outputs: Option<sha256::Hash>,
-
-    /// Hash of all the prevout amounts, computed as required
-    hash_amounts: Option<sha256::Hash>,
-    /// Hash of all the prevout scriptpubkeys, computed as required
-    hash_scriptpubkeys: Option<sha256::Hash>,
-}
-
 impl<'a> SigHashCache<'a> {
     /// Compute the sighash components from an unsigned transaction and auxiliary
     /// in a lazy manner when required.
@@ -146,17 +151,14 @@ impl<'a> SigHashCache<'a> {
     pub fn new(tx: &'a Transaction) -> Self {
         SigHashCache {
             tx,
-            hash_prevouts: None,
-            hash_sequence: None,
-            hash_outputs: None,
-            hash_amounts: None,
-            hash_scriptpubkeys: None,
+            common_cache: None,
+            taproot_cache: None,
         }
     }
 
     /// Encode the BIP341 signing data for any flag type into a given object implementing a
     /// std::io::Write trait.
-    pub fn encode_signing_data_to<Write: io::Write>(
+    pub fn taproot_encode_signing_data_to<Write: io::Write>(
         &mut self,
         mut writer: Write,
         input_index: usize,
@@ -196,18 +198,22 @@ impl<'a> SigHashCache<'a> {
         //     sha_scriptpubkeys (32): the SHA256 of the serialization of all spent output scriptPubKeys.
         //     sha_sequences (32): the SHA256 of the serialization of all input nSequence.
         if !anyone_can_pay {
-            self.hash_prevouts().consensus_encode(&mut writer)?;
-            self.hash_amounts(prevouts.get_all()?)
+            self.common_cache().prevouts.consensus_encode(&mut writer)?;
+            self.taproot_cache(prevouts.get_all()?)
+                .amounts
                 .consensus_encode(&mut writer)?;
-            self.hash_scriptpubkeys(prevouts.get_all()?)
+            self.taproot_cache(prevouts.get_all()?)
+                .script_pubkeys
                 .consensus_encode(&mut writer)?;
-            self.hash_sequence().consensus_encode(&mut writer)?;
+            self.common_cache()
+                .sequences
+                .consensus_encode(&mut writer)?;
         }
 
         // If hash_type & 3 does not equal SIGHASH_NONE or SIGHASH_SINGLE:
         //     sha_outputs (32): the SHA256 of the serialization of all outputs in CTxOut format.
         if sighash != SigHashType::None && sighash != SigHashType::Single {
-            self.hash_outputs().consensus_encode(&mut writer)?;
+            self.common_cache().outputs.consensus_encode(&mut writer)?;
         }
 
         // * Data about this input:
@@ -284,7 +290,7 @@ impl<'a> SigHashCache<'a> {
     }
 
     /// Compute the BIP341 sighash for any flag type.
-    pub fn signature_hash(
+    pub fn taproot_signature_hash(
         &mut self,
         input_index: usize,
         prevouts: &Prevouts,
@@ -293,7 +299,7 @@ impl<'a> SigHashCache<'a> {
         sighash_type: SigHashType,
     ) -> Result<TapSighashHash, Error> {
         let mut enc = TapSighashHash::engine();
-        self.encode_signing_data_to(
+        self.taproot_encode_signing_data_to(
             &mut enc,
             input_index,
             prevouts,
@@ -304,67 +310,50 @@ impl<'a> SigHashCache<'a> {
         Ok(TapSighashHash::from_engine(enc))
     }
 
-    /// Calculate hash for prevouts scriptpubkeys
-    pub fn hash_scriptpubkeys(&mut self, prevouts: &[TxOut]) -> sha256::Hash {
-        let hash_scriptpubkeys = &mut self.hash_scriptpubkeys;
-        *hash_scriptpubkeys.get_or_insert_with(|| {
-            let mut enc = sha256::Hash::engine();
+    fn common_cache(&mut self) -> &CommonCache {
+        if self.common_cache.is_none() {
+            let mut enc_prevouts = sha256::Hash::engine();
+            let mut enc_sequences = sha256::Hash::engine();
+            for txin in self.tx.input.iter() {
+                txin.previous_output
+                    .consensus_encode(&mut enc_prevouts)
+                    .unwrap();
+                txin.sequence.consensus_encode(&mut enc_sequences).unwrap();
+            }
+            let cache = CommonCache {
+                prevouts: sha256::Hash::from_engine(enc_prevouts),
+                sequences: sha256::Hash::from_engine(enc_sequences),
+                outputs: {
+                    let mut enc = sha256::Hash::engine();
+                    for txout in self.tx.output.iter() {
+                        txout.consensus_encode(&mut enc).unwrap();
+                    }
+                    sha256::Hash::from_engine(enc)
+                },
+            };
+            self.common_cache = Some(cache);
+        }
+        self.common_cache.as_ref().unwrap() // safe to unwrap because we checked is_none()
+    }
+
+    fn taproot_cache(&mut self, prevouts: &[TxOut]) -> &TaprootCache {
+        if self.taproot_cache.is_none() {
+            let mut enc_amounts = sha256::Hash::engine();
+            let mut enc_script_pubkeys = sha256::Hash::engine();
             for prevout in prevouts {
-                prevout.script_pubkey.consensus_encode(&mut enc).unwrap();
+                prevout.value.consensus_encode(&mut enc_amounts).unwrap();
+                prevout
+                    .script_pubkey
+                    .consensus_encode(&mut enc_script_pubkeys)
+                    .unwrap();
             }
-            sha256::Hash::from_engine(enc)
-        })
-    }
-
-    /// Calculate hash for prevouts amounts
-    pub fn hash_amounts(&mut self, prevouts: &[TxOut]) -> sha256::Hash {
-        let hash_amounts = &mut self.hash_amounts;
-        *hash_amounts.get_or_insert_with(|| {
-            let mut enc = sha256::Hash::engine();
-            for prevout in prevouts {
-                prevout.value.consensus_encode(&mut enc).unwrap();
-            }
-            sha256::Hash::from_engine(enc)
-        })
-    }
-
-    /// Calculate hash for prevouts
-    pub fn hash_prevouts(&mut self) -> sha256::Hash {
-        let hash_prevout = &mut self.hash_prevouts;
-        let input = &self.tx.input;
-        *hash_prevout.get_or_insert_with(|| {
-            let mut enc = sha256::Hash::engine();
-            for txin in input {
-                txin.previous_output.consensus_encode(&mut enc).unwrap();
-            }
-            sha256::Hash::from_engine(enc)
-        })
-    }
-
-    /// Calculate hash for input sequence values
-    pub fn hash_sequence(&mut self) -> sha256::Hash {
-        let hash_sequence = &mut self.hash_sequence;
-        let input = &self.tx.input;
-        *hash_sequence.get_or_insert_with(|| {
-            let mut enc = sha256::Hash::engine();
-            for txin in input {
-                txin.sequence.consensus_encode(&mut enc).unwrap();
-            }
-            sha256::Hash::from_engine(enc)
-        })
-    }
-
-    /// Calculate hash for outputs
-    pub fn hash_outputs(&mut self) -> sha256::Hash {
-        let hash_output = &mut self.hash_outputs;
-        let output = &self.tx.output;
-        *hash_output.get_or_insert_with(|| {
-            let mut enc = sha256::Hash::engine();
-            for txout in output {
-                txout.consensus_encode(&mut enc).unwrap();
-            }
-            sha256::Hash::from_engine(enc)
-        })
+            let cache = TaprootCache {
+                amounts: sha256::Hash::from_engine(enc_amounts),
+                script_pubkeys: sha256::Hash::from_engine(enc_script_pubkeys),
+            };
+            self.taproot_cache = Some(cache);
+        }
+        self.taproot_cache.as_ref().unwrap() // safe to unwrap because we checked is_none()
     }
 }
 
@@ -399,7 +388,10 @@ mod tests {
     use consensus::deserialize;
     use hashes::hex::FromHex;
     use hashes::{Hash, HashEngine};
-    use util::bip341::{Annex, Error, Prevouts, ScriptPath, SigHashCache};
+    use std::mem::size_of;
+    use util::bip341::{
+        Annex, CommonCache, Error, Prevouts, ScriptPath, SigHashCache, TaprootCache,
+    };
     use util::taproot::TapSighashHash;
     use {Script, SigHashType, Transaction, TxIn, TxOut};
 
@@ -468,6 +460,14 @@ mod tests {
     }
 
     #[test]
+    fn sizeof() {
+        assert_eq!(size_of::<Option<CommonCache>>(), 97);
+        assert_eq!(size_of::<Option<TaprootCache>>(), 65);
+        assert_eq!(size_of::<&Transaction>(), 8);
+        assert_eq!(size_of::<SigHashCache>(), 176);
+    }
+
+    #[test]
     fn test_sighashes_with_annex() {
         test_sighash(
             "0200000001df8123752e8f37d132c4e9f1ff7e4f9b986ade9211267e9ebd5fd22a5e718dec6d01000000ce4023b903cb7b23000000000017a914a18b36ea7a094db2f4940fc09edf154e86de7bd787580200000000000017a914afd0d512a2c5c2b40e25669e9cc460303c325b8b87580200000000000017a914a18b36ea7a094db2f4940fc09edf154e86de7bd787f6020000",
@@ -517,11 +517,17 @@ mod tests {
         let mut sig_hash = SigHashCache::new(&dumb_tx);
 
         assert_eq!(
-            sig_hash.signature_hash(0, &Prevouts::All(&vec![]), None, None, SigHashType::All),
+            sig_hash.taproot_signature_hash(
+                0,
+                &Prevouts::All(&vec![]),
+                None,
+                None,
+                SigHashType::All
+            ),
             Err(Error::PrevoutsSize)
         );
         assert_eq!(
-            sig_hash.signature_hash(
+            sig_hash.taproot_signature_hash(
                 0,
                 &Prevouts::All(&vec![TxOut::default(), TxOut::default()]),
                 None,
@@ -531,7 +537,7 @@ mod tests {
             Err(Error::PrevoutsSize)
         );
         assert_eq!(
-            sig_hash.signature_hash(
+            sig_hash.taproot_signature_hash(
                 0,
                 &Prevouts::Anyone(1, &TxOut::default()),
                 None,
@@ -541,7 +547,7 @@ mod tests {
             Err(Error::PrevoutKind)
         );
         assert_eq!(
-            sig_hash.signature_hash(
+            sig_hash.taproot_signature_hash(
                 0,
                 &Prevouts::Anyone(1, &TxOut::default()),
                 None,
@@ -551,7 +557,7 @@ mod tests {
             Err(Error::PrevoutIndex)
         );
         assert_eq!(
-            sig_hash.signature_hash(
+            sig_hash.taproot_signature_hash(
                 10,
                 &Prevouts::Anyone(1, &TxOut::default()),
                 None,
@@ -611,7 +617,7 @@ mod tests {
         let mut sig_hash_cache = SigHashCache::new(&tx);
 
         let hash = sig_hash_cache
-            .signature_hash(input_index, &prevouts, annex, script_path, sighash_type)
+            .taproot_signature_hash(input_index, &prevouts, annex, script_path, sighash_type)
             .unwrap();
         let expected = Vec::from_hex(expected_hash).unwrap();
         assert_eq!(expected, hash.into_inner());
