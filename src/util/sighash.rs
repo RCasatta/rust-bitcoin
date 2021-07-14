@@ -25,11 +25,14 @@ use std::{error, fmt, io};
 use util::taproot::{TapLeafHash, TapSighashHash};
 use SigHash;
 use {Script, SigHashType, Transaction, TxOut};
+use std::ops::{Deref, DerefMut};
 
-/// Efficientlu calculates signature hash message for legacy, segwit and taproot inputs.
-pub struct SigHashCache<'a> {
-    /// Access to transaction required for various introspection
-    tx: &'a Transaction,
+/// Efficiently calculates signature hash message for legacy, segwit and taproot inputs.
+pub struct SigHashCache<T: Deref<Target=Transaction>> {
+    /// Access to transaction required for various introspection, moreover type
+    /// `T: Deref<Target=Transaction>` allows to accept borrow and mutable borrow, the
+    /// latter in particular is necessary for [SigHashCache::access_witness]
+    tx: T,
 
     /// Common cache for taproot and segwit inputs. It's an option because it's not needed for legacy inputs
     common_cache: Option<CommonCache>,
@@ -45,7 +48,10 @@ pub struct SigHashCache<'a> {
 pub struct CommonCache {
     prevouts: sha256::Hash,
     sequences: sha256::Hash,
-    outputs: sha256::Hash, // maybe Option since NONE and SINGLE doesn't need it
+
+    /// in theory, `outputs` could be `Option` since `NONE` and `SINGLE` doesn't need it, but since
+    /// `ALL` is the mostly used variant by large, we don't bother
+    outputs: sha256::Hash,
 }
 
 /// values cached for segwit inputs, it's equal to [CommonCache] plus another round of `sha256`
@@ -79,21 +85,6 @@ pub struct ScriptPath<'s> {
     script: &'s Script,
     code_separator_pos: u32,
     leaf_version: u8,
-}
-
-impl<'s> ScriptPath<'s> {
-    /// Create a new ScriptPath structure
-    pub fn new(script: &'s Script, code_separator_pos: u32, leaf_version: u8) -> Self {
-        ScriptPath {
-            script,
-            code_separator_pos,
-            leaf_version,
-        }
-    }
-    /// Create a new ScriptPath structure using default values for `code_separator_pos` and `leaf_version`
-    pub fn with_defaults(script: &'s Script) -> Self {
-        Self::new(script, 0xFFFFFFFFu32, LEAF_VERSION_TAPSCRIPT)
-    }
 }
 
 /// Possible errors in computing the signature message
@@ -166,12 +157,27 @@ impl<'u> Prevouts<'u> {
     }
 }
 
-impl<'a> SigHashCache<'a> {
+impl<'s> ScriptPath<'s> {
+    /// Create a new ScriptPath structure
+    pub fn new(script: &'s Script, code_separator_pos: u32, leaf_version: u8) -> Self {
+        ScriptPath {
+            script,
+            code_separator_pos,
+            leaf_version,
+        }
+    }
+    /// Create a new ScriptPath structure using default values for `code_separator_pos` and `leaf_version`
+    pub fn with_defaults(script: &'s Script) -> Self {
+        Self::new(script, 0xFFFFFFFFu32, LEAF_VERSION_TAPSCRIPT)
+    }
+}
+
+impl<R: Deref<Target=Transaction>> SigHashCache<R> {
     /// Compute the sighash components from an unsigned transaction and auxiliary
     /// in a lazy manner when required.
     /// For the generated sighashes to be valid, no fields in the transaction may change except for
     /// script_sig and witnesses.
-    pub fn new(tx: &'a Transaction) -> Self {
+    pub fn new(tx: R) -> Self {
         SigHashCache {
             tx,
             common_cache: None,
@@ -316,7 +322,7 @@ impl<'a> SigHashCache<'a> {
     }
 
     /// Compute the BIP341 sighash for any flag type.
-    pub fn taproot_sig_hash(
+    pub fn taproot_signature_hash(
         &mut self,
         input_index: usize,
         prevouts: &Prevouts,
@@ -508,6 +514,33 @@ impl<'a> SigHashCache<'a> {
     }
 }
 
+
+impl<R: DerefMut<Target=Transaction>> SigHashCache<R> {
+    /// When the SigHashCache is initialized with a mutable reference to a transaction instead of a
+    /// regular reference, this method is available to allow modification to the witnesses.
+    ///
+    /// This allows in-line signing such as
+    /// ```
+    /// use bitcoin::blockdata::transaction::{Transaction, SigHashType};
+    /// use bitcoin::util::bip143::SigHashCache;
+    /// use bitcoin::Script;
+    ///
+    /// let mut tx_to_sign = Transaction { version: 2, lock_time: 0, input: Vec::new(), output: Vec::new() };
+    /// let input_count = tx_to_sign.input.len();
+    ///
+    /// let mut sig_hasher = SigHashCache::new(&mut tx_to_sign);
+    /// for inp in 0..input_count {
+    ///     let prevout_script = Script::new();
+    ///     let _sighash = sig_hasher.signature_hash(inp, &prevout_script, 42, SigHashType::All);
+    ///     // ... sign the sighash
+    ///     sig_hasher.access_witness(inp).push(Vec::new());
+    /// }
+    /// ```
+    pub fn access_witness(&mut self, input_index: usize) -> &mut Vec<Vec<u8>> {
+        &mut self.tx.input[input_index].witness
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(_: io::Error) -> Self {
         Error::IoError
@@ -621,7 +654,7 @@ mod tests {
         assert_eq!(size_of::<Option<TaprootCache>>(), 65);
         assert_eq!(size_of::<Option<SegwitCache>>(), 97);
         assert_eq!(size_of::<&Transaction>(), 8);
-        assert_eq!(size_of::<SigHashCache>(), 272);
+        assert_eq!(size_of::<SigHashCache<&Transaction>>(), 272);
     }
 
     #[test]
@@ -674,27 +707,27 @@ mod tests {
         let mut sig_hash = SigHashCache::new(&dumb_tx);
 
         assert_eq!(
-            sig_hash.taproot_sig_hash(0, &Prevouts::All(&vec![]), None, None, SigHashType::All),
+            sig_hash.taproot_signature_hash(0, &Prevouts::All(&vec![]), None, None, SigHashType::All),
             Err(Error::PrevoutsSize)
         );
         let two = vec![TxOut::default(), TxOut::default()];
         let too_many_prevouts = Prevouts::All(&two);
         assert_eq!(
-            sig_hash.taproot_sig_hash(0, &too_many_prevouts, None, None, SigHashType::All),
+            sig_hash.taproot_signature_hash(0, &too_many_prevouts, None, None, SigHashType::All),
             Err(Error::PrevoutsSize)
         );
         let tx_out = TxOut::default();
         let prevout = Prevouts::Anyone(1, &tx_out);
         assert_eq!(
-            sig_hash.taproot_sig_hash(0, &prevout, None, None, SigHashType::All),
+            sig_hash.taproot_signature_hash(0, &prevout, None, None, SigHashType::All),
             Err(Error::PrevoutKind)
         );
         assert_eq!(
-            sig_hash.taproot_sig_hash(0, &prevout, None, None, SigHashType::AllPlusAnyoneCanPay),
+            sig_hash.taproot_signature_hash(0, &prevout, None, None, SigHashType::AllPlusAnyoneCanPay),
             Err(Error::PrevoutIndex)
         );
         assert_eq!(
-            sig_hash.taproot_sig_hash(10, &prevout, None, None, SigHashType::AllPlusAnyoneCanPay),
+            sig_hash.taproot_signature_hash(10, &prevout, None, None, SigHashType::AllPlusAnyoneCanPay),
             Err(Error::IndexGreaterThanInputsSize)
         );
     }
@@ -748,7 +781,7 @@ mod tests {
         let mut sig_hash_cache = SigHashCache::new(&tx);
 
         let hash = sig_hash_cache
-            .taproot_sig_hash(input_index, &prevouts, annex, script_path, sighash_type)
+            .taproot_signature_hash(input_index, &prevouts, annex, script_path, sighash_type)
             .unwrap();
         let expected = Vec::from_hex(expected_hash).unwrap();
         assert_eq!(expected, hash.into_inner());
