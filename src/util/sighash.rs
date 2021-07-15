@@ -210,20 +210,6 @@ impl From<LegacySigHashType> for SigHashType {
     }
 }
 
-impl From<SigHashType> for LegacySigHashType {
-    fn from(s: SigHashType) -> Self {
-        match s {
-            SigHashType::Default => LegacySigHashType::All,
-            SigHashType::All => LegacySigHashType::All,
-            SigHashType::None => LegacySigHashType::None,
-            SigHashType::Single => LegacySigHashType::Single,
-            SigHashType::AllPlusAnyoneCanPay => LegacySigHashType::AllPlusAnyoneCanPay,
-            SigHashType::NonePlusAnyoneCanPay => LegacySigHashType::NonePlusAnyoneCanPay,
-            SigHashType::SinglePlusAnyoneCanPay => LegacySigHashType::SinglePlusAnyoneCanPay,
-        }
-    }
-}
-
 impl SigHashType {
     /// Break the sighash flag into the "real" sighash flag and the ANYONECANPAY boolean
     pub(crate) fn split_anyonecanpay_flag(self) -> (SigHashType, bool) {
@@ -417,7 +403,7 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         input_index: usize,
         script_code: &Script,
         value: u64,
-        sighash_type: SigHashType,
+        sighash_type: LegacySigHashType,
     ) -> Result<(), Error> {
         self.check_index(input_index)?;
 
@@ -433,7 +419,7 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
             zero_hash.consensus_encode(&mut writer)?;
         }
 
-        if !anyone_can_pay && sighash != SigHashType::Single && sighash != SigHashType::None {
+        if !anyone_can_pay && sighash != LegacySigHashType::Single && sighash != LegacySigHashType::None {
             self.segwit_cache()
                 .sequences
                 .consensus_encode(&mut writer)?;
@@ -450,9 +436,9 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
             txin.sequence.consensus_encode(&mut writer)?;
         }
 
-        if sighash != SigHashType::Single && sighash != SigHashType::None {
+        if sighash != LegacySigHashType::Single && sighash != LegacySigHashType::None {
             self.segwit_cache().outputs.consensus_encode(&mut writer)?;
-        } else if sighash == SigHashType::Single && input_index < self.tx.output.len() {
+        } else if sighash == LegacySigHashType::Single && input_index < self.tx.output.len() {
             let mut single_enc = SigHash::engine();
             self.tx.output[input_index].consensus_encode(&mut single_enc)?;
             SigHash::from_engine(single_enc).consensus_encode(&mut writer)?;
@@ -461,7 +447,7 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         }
 
         self.tx.lock_time.consensus_encode(&mut writer)?;
-        LegacySigHashType::from(sighash_type)
+        sighash_type
             .as_u32()
             .consensus_encode(&mut writer)?;
         Ok(())
@@ -473,7 +459,7 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         input_index: usize,
         script_code: &Script,
         value: u64,
-        sighash_type: SigHashType,
+        sighash_type: LegacySigHashType,
     ) -> Result<SigHash, Error> {
         let mut enc = SigHash::engine();
         self.segwit_encode_signing_data_to(
