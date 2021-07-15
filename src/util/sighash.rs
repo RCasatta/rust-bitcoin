@@ -75,8 +75,8 @@ pub enum Prevouts<'u> {
     /// when modifier `ANYONECANPAY` is provided, only prevout of the current input is needed.
     /// The first `usize` argument is the input index this [TxOut] is referring to.
     One(usize, &'u TxOut),
-    /// When `ANYONECANPAY` is not provided, or the caller is handy giving all prevouts so he can
-    /// reuse the same variable for multiple inputs.
+    /// When `ANYONECANPAY` is not provided, or the caller is handy giving all prevouts so the same
+    /// variable can be used for multiple inputs.
     All(&'u [TxOut]),
 }
 
