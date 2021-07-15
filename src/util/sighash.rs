@@ -415,10 +415,10 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         &mut self,
         mut writer: Write,
         input_index: usize,
-        prevouts: &Prevouts,
+        script_code: &Script,
+        value: u64,
         sighash_type: SigHashType,
     ) -> Result<(), Error> {
-        prevouts.check_all(&self.tx)?;
         self.check_index(input_index)?;
 
         let zero_hash = sha256d::Hash::default();
@@ -445,14 +445,8 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
             let txin = &self.tx.input[input_index];
 
             txin.previous_output.consensus_encode(&mut writer)?;
-            prevouts
-                .get(input_index)?
-                .script_pubkey
-                .consensus_encode(&mut writer)?;
-            prevouts
-                .get(input_index)?
-                .value
-                .consensus_encode(&mut writer)?;
+            script_code.consensus_encode(&mut writer)?;
+            value.consensus_encode(&mut writer)?;
             txin.sequence.consensus_encode(&mut writer)?;
         }
 
@@ -477,11 +471,18 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
     pub fn segwit_signature_hash(
         &mut self,
         input_index: usize,
-        prevouts: &Prevouts,
+        script_code: &Script,
+        value: u64,
         sighash_type: SigHashType,
     ) -> Result<SigHash, Error> {
         let mut enc = SigHash::engine();
-        self.segwit_encode_signing_data_to(&mut enc, input_index, prevouts, sighash_type)?;
+        self.segwit_encode_signing_data_to(
+            &mut enc,
+            input_index,
+            script_code,
+            value,
+            sighash_type,
+        )?;
         Ok(SigHash::from_engine(enc))
     }
 
@@ -638,6 +639,7 @@ mod tests {
     use hashes::{Hash, HashEngine};
     use network::constants::Network;
     use std::mem::size_of;
+    use std::str::FromStr;
     use util::address::Address;
     use util::bip143;
     use util::ecdsa::PublicKey;
@@ -647,7 +649,6 @@ mod tests {
     };
     use util::taproot::TapSighashHash;
     use {Script, Transaction, TxIn, TxOut};
-    use std::str::FromStr;
 
     #[test]
     fn test_tap_sighash_hash() {
@@ -883,13 +884,9 @@ mod tests {
         let expected_result = SigHash::from_slice(&raw_expected[..]).unwrap();
         let mut cache = SigHashCache::new(&tx);
         let sighash_type = LegacySigHashType::from_u32_consensus(hash_type);
-        let tx_out = TxOut {
-            value,
-            script_pubkey,
-        };
-        let prevout = Prevouts::One(input_index, &tx_out);
+
         let actual_result = cache
-            .segwit_signature_hash(input_index, &prevout, sighash_type.into())
+            .segwit_signature_hash(input_index, &script_pubkey, value, sighash_type.into())
             .unwrap();
         assert_eq!(actual_result, expected_result);
     }

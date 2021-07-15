@@ -24,8 +24,7 @@ use hash_types::SigHash;
 use blockdata::script::Script;
 use blockdata::transaction::{Transaction, TxIn, SigHashType};
 use consensus::{encode, Encodable};
-
-use ::{io, TxOut};
+use io;
 use core::ops::{Deref, DerefMut};
 use util::sighash;
 
@@ -131,10 +130,8 @@ impl<R: Deref<Target=Transaction>> SigHashCache<R> {
         value: u64,
         sighash_type: SigHashType,
     ) -> Result<(), encode::Error> {
-        let tx_out = TxOut { value, script_pubkey: script_code.clone() };
-        let prevout = sighash::Prevouts::One(input_index, &tx_out);
         self.cache
-            .segwit_encode_signing_data_to(writer, input_index, &prevout, sighash_type.into())
+            .segwit_encode_signing_data_to(writer, input_index, script_code, value, sighash_type.into())
             .expect("input_index greater than tx input len");
         Ok(())
     }
