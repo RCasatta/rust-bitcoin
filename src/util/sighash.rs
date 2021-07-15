@@ -491,17 +491,12 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         &self,
         mut writer: Write,
         input_index: usize,
-        prevouts: &Prevouts,
+        script_pubkey: &Script,
         sighash_type: U,
     ) -> Result<(), Error> {
         self.check_index(input_index)?;
         self.tx
-            .encode_signing_data_to(
-                &mut writer,
-                input_index,
-                &prevouts.get(input_index)?.script_pubkey,
-                sighash_type.into(),
-            )
+            .encode_signing_data_to(&mut writer, input_index, script_pubkey, sighash_type.into())
             .expect("writers don't error");
         Ok(())
     }
@@ -510,11 +505,11 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
     pub fn legacy_signature_hash(
         &self,
         input_index: usize,
-        prevouts: &Prevouts,
+        script_pubkey: &Script,
         sighash_type: u32,
     ) -> Result<SigHash, Error> {
         let mut enc = SigHash::engine();
-        self.legacy_encode_signing_data_to(&mut enc, input_index, prevouts, sighash_type)?;
+        self.legacy_encode_signing_data_to(&mut enc, input_index, script_pubkey, sighash_type)?;
         Ok(SigHash::from_engine(enc))
     }
 
@@ -1042,14 +1037,9 @@ mod tests {
         let mut raw_expected = Vec::from_hex(expected_result).unwrap();
         raw_expected.reverse();
         let expected_result = SigHash::from_slice(&raw_expected[..]).unwrap();
-        let tx_out = TxOut {
-            script_pubkey,
-            value: 0,
-        };
-        let prevout = Prevouts::One(input_index, &tx_out);
 
         let actual_result = cache
-            .legacy_signature_hash(input_index, &prevout, hash_type as u32)
+            .legacy_signature_hash(input_index, &script_pubkey, hash_type as u32)
             .unwrap();
         assert_eq!(actual_result, expected_result);
     }
