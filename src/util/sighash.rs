@@ -647,6 +647,7 @@ mod tests {
     };
     use util::taproot::TapSighashHash;
     use {Script, Transaction, TxIn, TxOut};
+    use std::str::FromStr;
 
     #[test]
     fn test_tap_sighash_hash() {
@@ -863,8 +864,7 @@ mod tests {
     // segwit v0 tests
 
     fn p2pkh_hex(pk: &str) -> Script {
-        let pk = Vec::from_hex(pk).unwrap();
-        let pk = PublicKey::from_slice(pk.as_slice()).unwrap();
+        let pk = PublicKey::from_str(&pk).unwrap();
         let witness_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
         witness_script
     }
