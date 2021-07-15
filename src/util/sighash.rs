@@ -419,7 +419,10 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
             zero_hash.consensus_encode(&mut writer)?;
         }
 
-        if !anyone_can_pay && sighash != LegacySigHashType::Single && sighash != LegacySigHashType::None {
+        if !anyone_can_pay
+            && sighash != LegacySigHashType::Single
+            && sighash != LegacySigHashType::None
+        {
             self.segwit_cache()
                 .sequences
                 .consensus_encode(&mut writer)?;
@@ -447,9 +450,7 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         }
 
         self.tx.lock_time.consensus_encode(&mut writer)?;
-        sighash_type
-            .as_u32()
-            .consensus_encode(&mut writer)?;
+        sighash_type.as_u32().consensus_encode(&mut writer)?;
         Ok(())
     }
 
@@ -624,14 +625,12 @@ mod tests {
     use hashes::hex::FromHex;
     use hashes::{Hash, HashEngine};
     use network::constants::Network;
-    use std::mem::size_of;
     use std::str::FromStr;
     use util::address::Address;
     use util::bip143;
     use util::ecdsa::PublicKey;
     use util::sighash::{
-        Annex, CommonCache, Error, LegacySigHashType, Prevouts, ScriptPath, SegwitCache,
-        SigHashCache, SigHashType, TaprootCache,
+        Annex, Error, LegacySigHashType, Prevouts, ScriptPath, SigHashCache, SigHashType,
     };
     use util::taproot::TapSighashHash;
     use {Script, Transaction, TxIn, TxOut};
@@ -707,15 +706,6 @@ mod tests {
             "bf9c83f26c6dd16449e4921f813f551c4218e86f2ec906ca8611175b41b566df",
             SigHashType::SinglePlusAnyoneCanPay, None,None,
         );
-    }
-
-    #[test]
-    fn sizeof() {
-        assert_eq!(size_of::<Option<CommonCache>>(), 97);
-        assert_eq!(size_of::<Option<TaprootCache>>(), 65);
-        assert_eq!(size_of::<Option<SegwitCache>>(), 97);
-        assert_eq!(size_of::<&Transaction>(), 8);
-        assert_eq!(size_of::<SigHashCache<&Transaction>>(), 272);
     }
 
     #[test]
