@@ -338,15 +338,11 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
         //      scriptPubKey (35): scriptPubKey of the previous output spent by this input, serialized as script inside CTxOut. Its size is always 35 bytes.
         //      nSequence (4): nSequence of this input.
         if anyone_can_pay {
-            let txin =
-                &self
-                    .tx
-                    .input
-                    .get(input_index)
-                    .ok_or_else(|| Error::IndexOutOfInputsBounds {
-                        index: input_index,
-                        inputs_size: self.tx.input.len(),
-                    })?;
+            let maybe_input = &self.tx.input.get(input_index);
+            let txin = maybe_input.ok_or_else(|| Error::IndexOutOfInputsBounds {
+                index: input_index,
+                inputs_size: self.tx.input.len(),
+            })?;
             let previous_output = prevouts.get(input_index)?;
             txin.previous_output.consensus_encode(&mut writer)?;
             previous_output.value.consensus_encode(&mut writer)?;
@@ -385,10 +381,10 @@ impl<R: Deref<Target = Transaction>> SigHashCache<R> {
             hash.consensus_encode(&mut writer)?;
         }
 
-        //     if (scriptpath):
-        //         ss += TaggedHash("TapLeaf", bytes([leaf_ver]) + ser_string(script))
-        //         ss += bytes([0])
-        //         ss += struct.pack("<i", codeseparator_pos)
+        // if (scriptpath):
+        //   ss += TaggedHash("TapLeaf", bytes([leaf_ver]) + ser_string(script))
+        //   ss += bytes([0])
+        //   ss += struct.pack("<i", codeseparator_pos)
         if let Some(ScriptPath {
             script,
             leaf_version,
