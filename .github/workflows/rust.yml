@@ -7,6 +7,7 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - rust: stable
@@ -29,8 +30,6 @@ jobs:
               AS_DEPENDENCY: true
               PIN_VERSIONS: true
     steps:
-      - name: Install test dependencies
-        run: sudo apt-get update -y && sudo apt-get install -y binutils-dev libunwind8-dev libcurl4-openssl-dev libelf-dev libdw-dev cmake gcc libiberty-dev
       - name: Checkout Crate
         uses: actions/checkout@v2
       - name: Checkout Toolchain
