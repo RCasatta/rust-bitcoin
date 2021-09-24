@@ -34,7 +34,7 @@ jobs:
       - run: echo "HFUZZ_RUN_ARGS=\"--run_time 30 --exit_upon_crash -v -f hfuzz_input/${{ matrix.fuzz_target }}/input\"" >> $GITHUB_ENV
       - name: fuzz
         run: cd fuzz && cargo +nightly hfuzz run ${{ matrix.fuzz_target }}
-      - run: echo "${{ matrix.fuzz_target }}.rs" >${{ matrix.fuzz_target }}
+      - run: echo "${{ matrix.fuzz_target }}.rs" >executed_${{ matrix.fuzz_target }}
       - uses: actions/upload-artifact@v2
         with:
           name: executed_${{ matrix.fuzz_target }}
@@ -44,6 +44,7 @@ jobs:
     needs: fuzz
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v2
       - uses: actions/download-artifact@v2
       - name: Display structure of downloaded files
         run: ls -R
