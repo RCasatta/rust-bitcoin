@@ -31,6 +31,7 @@ use blockdata::transaction::{OutPoint, Transaction, TxOut, TxIn};
 use blockdata::block::{Block, BlockHeader};
 use network::constants::Network;
 use util::uint::Uint256;
+use blockdata::witness::Witness;
 
 /// The maximum allowable sequence number
 pub const MAX_SEQUENCE: u32 = 0xFFFFFFFF;
@@ -93,7 +94,7 @@ fn bitcoin_genesis_tx() -> Transaction {
         previous_output: OutPoint::null(),
         script_sig: in_script,
         sequence: MAX_SEQUENCE,
-        witness: vec![],
+        witness: Witness::default(),
     });
 
     // Outputs

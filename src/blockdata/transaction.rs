@@ -40,6 +40,7 @@ use consensus::{encode, Decodable, Encodable};
 use consensus::encode::MAX_VEC_SIZE;
 use hash_types::{SigHash, Txid, Wtxid};
 use VarInt;
+use blockdata::witness::Witness;
 
 /// A reference to a transaction output
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -197,7 +198,7 @@ pub struct TxIn {
     /// Encodable/Decodable, as it is (de)serialized at the end of the full
     /// Transaction. It *is* (de)serialized with the rest of the TxIn in other
     /// (de)serialization routines.
-    pub witness: Vec<Vec<u8>>
+    pub witness: Witness
 }
 
 impl Default for TxIn {
@@ -206,7 +207,7 @@ impl Default for TxIn {
             previous_output: OutPoint::default(),
             script_sig: Script::new(),
             sequence: u32::max_value(),
-            witness: Vec::new(),
+            witness: Witness::default(),
         }
     }
 }
@@ -280,7 +281,7 @@ impl Transaction {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,
-            input: self.input.iter().map(|txin| TxIn { script_sig: Script::new(), witness: vec![], .. *txin }).collect(),
+            input: self.input.iter().map(|txin| TxIn { script_sig: Script::new(), witness: Witness::default(), .. *txin }).collect(),
             output: self.output.clone(),
         };
         cloned_tx.txid().into()
@@ -357,7 +358,7 @@ impl Transaction {
                 previous_output: self.input[input_index].previous_output,
                 script_sig: script_pubkey.clone(),
                 sequence: self.input[input_index].sequence,
-                witness: vec![],
+                witness: Witness::default(),
             }];
         } else {
             tx.input = Vec::with_capacity(self.input.len());
@@ -366,7 +367,7 @@ impl Transaction {
                     previous_output: input.previous_output,
                     script_sig: if n == input_index { script_pubkey.clone() } else { Script::new() },
                     sequence: if n != input_index && (sighash == SigHashType::Single || sighash == SigHashType::None) { 0 } else { input.sequence },
-                    witness: vec![],
+                    witness: Witness::default(),
                 });
             }
         }
@@ -474,7 +475,8 @@ impl Transaction {
             if !input.witness.is_empty() {
                 inputs_with_witnesses += 1;
                 input_weight += VarInt(input.witness.len() as u64).len();
-                for elem in &input.witness {
+                for elem in input.witness.iter() {
+                    // TODO implement weight on Witness
                     input_weight += VarInt(elem.len() as u64).len() + elem.len();
                 }
             }
@@ -578,7 +580,7 @@ impl Decodable for TxIn {
             previous_output: Decodable::consensus_decode(&mut d)?,
             script_sig: Decodable::consensus_decode(&mut d)?,
             sequence: Decodable::consensus_decode(d)?,
-            witness: vec![],
+            witness: Witness::default(),
         })
     }
 }
@@ -804,7 +806,7 @@ mod tests {
     use consensus::encode::deserialize;
 
     use hashes::Hash;
-    use hashes::hex::FromHex;
+    use hashes::hex::{FromHex};
 
     use hash_types::*;
     use SigHashType;
@@ -901,12 +903,13 @@ mod tests {
 
     #[test]
     fn test_segwit_transaction() {
-        let tx_bytes = Vec::from_hex(
-            "02000000000101595895ea20179de87052b4046dfe6fd515860505d6511a9004cf12a1f93cac7c01000000\
+        let s = "02000000000101595895ea20179de87052b4046dfe6fd515860505d6511a9004cf12a1f93cac7c01000000\
             00ffffffff01deb807000000000017a9140f3444e271620c736808aa7b33e370bd87cb5a078702483045022\
             100fb60dad8df4af2841adc0346638c16d0b8035f5e3f3753b88db122e70c79f9370220756e6633b17fd271\
             0e626347d28d60b0a2d6cbb41de51740644b9fb3ba7751040121028fa937ca8cba2197a37c007176ed89410\
-            55d3bcb8627d085e94553e62f057dcc00000000"
+            55d3bcb8627d085e94553e62f057dcc00000000";
+        let tx_bytes = Vec::from_hex(
+            s
         ).unwrap();
         let tx: Result<Transaction, _> = deserialize(&tx_bytes);
         assert!(tx.is_ok());

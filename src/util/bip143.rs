@@ -25,11 +25,10 @@ use blockdata::script::Script;
 use blockdata::transaction::{Transaction, TxIn, SigHashType};
 use consensus::{encode, Encodable};
 
-use prelude::*;
-
 use io;
 use core::ops::{Deref, DerefMut};
 use util::sighash;
+use blockdata::witness::Witness;
 
 /// Parts of a sighash which are common across inputs or signatures, and which are
 /// sufficient (in conjunction with a private key) to sign the transaction
@@ -177,10 +176,10 @@ impl<R: DerefMut<Target=Transaction>> SigHashCache<R> {
     ///     let prevout_script = Script::new();
     ///     let _sighash = sig_hasher.signature_hash(inp, &prevout_script, 42, SigHashType::All);
     ///     // ... sign the sighash
-    ///     sig_hasher.access_witness(inp).push(Vec::new());
+    ///     //sig_hasher.access_witness(inp).push(Vec::new());
     /// }
     /// ```
-    pub fn access_witness(&mut self, input_index: usize) -> &mut Vec<Vec<u8>> {
+    pub fn access_witness(&mut self, input_index: usize) -> &mut Witness {
         self.cache.witness_mut(input_index).unwrap()
     }
 }

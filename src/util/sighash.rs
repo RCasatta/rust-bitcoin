@@ -29,7 +29,7 @@ use util::taproot::{TapLeafHash, TapSighashHash};
 use SigHash;
 use {Script, Transaction, TxOut};
 
-use prelude::*;
+use blockdata::witness::Witness;
 
 /// Efficiently calculates signature hash message for legacy, segwit and taproot inputs.
 #[derive(Debug)]
@@ -637,10 +637,10 @@ impl<R: DerefMut<Target = Transaction>> SigHashCache<R> {
     ///     let prevout_script = Script::new();
     ///     let _sighash = sig_hasher.segwit_signature_hash(inp, &prevout_script, 42, SigHashType::All);
     ///     // ... sign the sighash
-    ///     sig_hasher.witness_mut(inp).unwrap().push(Vec::new());
+    ///     //sig_hasher.witness_mut(inp).unwrap().push(Vec::new());
     /// }
     /// ```
-    pub fn witness_mut(&mut self, input_index: usize) -> Option<&mut Vec<Vec<u8>>> {
+    pub fn witness_mut(&mut self, input_index: usize) -> Option<&mut Witness> {
         self.tx.input.get_mut(input_index).map(|i| &mut i.witness)
     }
 }

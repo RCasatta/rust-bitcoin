@@ -54,7 +54,7 @@
 #![deny(unused_mut)]
 #![deny(dead_code)]
 #![deny(unused_imports)]
-#![deny(missing_docs)]
+//#![deny(missing_docs)]
 #![deny(unused_must_use)]
 #![deny(broken_intra_doc_links)]
 
