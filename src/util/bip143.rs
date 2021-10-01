@@ -176,7 +176,7 @@ impl<R: DerefMut<Target=Transaction>> SigHashCache<R> {
     ///     let prevout_script = Script::new();
     ///     let _sighash = sig_hasher.signature_hash(inp, &prevout_script, 42, SigHashType::All);
     ///     // ... sign the sighash
-    ///     //sig_hasher.access_witness(inp).push(Vec::new());
+    ///     sig_hasher.access_witness(inp).push(&Vec::new());
     /// }
     /// ```
     pub fn access_witness(&mut self, input_index: usize) -> &mut Witness {

@@ -4,7 +4,18 @@ use std::io::{Read, Write};
 use consensus::encode::Error;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct Witness(Vec<u8>);
+pub struct Witness {
+
+    /// contains the witness Vec<Vec<u8>> serialization without the initial varint indicating the
+    /// number of elements (which is stored in len)
+    content: Vec<u8>,
+
+    /// number of elements in the witness
+    len: u64,
+
+    //TODO? consider having the number of witness elements and the len of the content used (both u32),
+    // this would allow to avoid some allocations during push
+}
 
 pub struct WitnessIterator<'a> {
     witness: &'a Witness,
@@ -13,7 +24,13 @@ pub struct WitnessIterator<'a> {
 
 impl From<Vec<Vec<u8>>>  for Witness {
     fn from(vec: Vec<Vec<u8>>) -> Self {
-        Witness(crate::consensus::serialize(&vec))
+        let len = vec.len() as u64;
+        let content = crate::consensus::serialize(&vec);
+        let index = VarInt(len).len();
+        Witness {
+            len,
+            content: content[index..].to_vec()
+        }
     }
 }
 
@@ -24,26 +41,24 @@ impl Decodable for Witness {
             Ok(Witness::default())
         } else {
             let mut cursor = 0;
+            let len = witness_elements.0;
 
             // this number should be determined as high enough to cover most witness, and low enough
             // to avoid wasting space without reallocating
-            let mut result = vec![0u8; 128];
-
-            witness_elements.consensus_encode(&mut result[cursor..cursor+witness_elements.len()])?;
-            cursor += witness_elements.len();
+            let mut content = vec![0u8; 128];
 
             for _ in 0..witness_elements.0 {
                 let element_size = VarInt::consensus_decode(&mut d)?;
-                resize_if_needed(&mut result, cursor, element_size.len());
-                element_size.consensus_encode(&mut result[cursor..cursor+element_size.len()])?;
+                resize_if_needed(&mut content, cursor, element_size.len());
+                element_size.consensus_encode(&mut content[cursor..cursor+element_size.len()])?;
                 cursor += element_size.len();
                 let element_size = element_size.0 as usize;
-                resize_if_needed(&mut result, cursor, element_size);
-                d.read_exact(&mut result[cursor..cursor+element_size])?;
+                resize_if_needed(&mut content, cursor, element_size);
+                d.read_exact(&mut content[cursor..cursor+element_size])?;
                 cursor += element_size;
             }
-            result.truncate(cursor);
-            Ok(Witness(result))
+            content.truncate(cursor);
+            Ok(Witness {content, len})
         }
     }
 }
@@ -56,14 +71,16 @@ fn resize_if_needed(vec: &mut Vec<u8>, cursor: usize, increment: usize) {
 
 impl Encodable for Witness {
     fn consensus_encode<W: Write>(&self, mut writer: W) -> Result<usize, std::io::Error> {
-        writer.emit_slice(&self.0[..])?;
-        Ok(self.0.len())
+        let len = VarInt(self.len);
+        len.consensus_encode(&mut writer)?;
+        writer.emit_slice(&self.content[..])?;
+        Ok(self.content.len() + len.len())
     }
 }
 
 impl Witness {
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.len == 0
     }
 
     pub fn iter(&self) -> WitnessIterator {
@@ -74,15 +91,22 @@ impl Witness {
     }
 
     pub fn len(&self) -> usize {
-        if self.is_empty() {
-            0
-        } else {
-            VarInt::consensus_decode(&self.0[..]).unwrap().0 as usize
-        }
+        self.len as usize
     }
 
     pub fn clear(&mut self) {
-        self.0.clear()
+        self.content.clear();
+        self.len = 0;
+    }
+
+    pub fn push(&mut self, el: &[u8]) {
+        self.len += 1;
+        let el_len = VarInt(el.len() as u64);
+        let cursor = self.content.len();
+        self.content.resize(self.content.len() + el_len.len() + el.len(), 0);
+        let end = cursor + el_len.len();
+        el_len.consensus_encode(&mut self.content[cursor..end]).unwrap();
+        self.content[end..].copy_from_slice(el);
     }
 }
 
@@ -90,7 +114,10 @@ impl Default for Witness {
     fn default() -> Self {
         // from https://doc.rust-lang.org/std/vec/struct.Vec.html#method.new
         // The vector will not allocate until elements are pushed onto it.
-        Witness(Vec::new())
+        Witness {
+            content: Vec::new(),
+            len: 0,
+        }
     }
 }
 
@@ -98,17 +125,12 @@ impl<'a> Iterator for WitnessIterator<'a> {
     type Item = &'a[u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        let vec = &self.witness.0;
+        let vec = &self.witness.content;
         if self.cursor >= vec.len() {
             None
         } else {
-            let index = if self.cursor == 0 {
-                VarInt::consensus_decode(&vec[..]).unwrap().len()
-            } else {
-                self.cursor
-            };
-            let var = VarInt::consensus_decode(&vec[index..]).unwrap();
-            let start = index + var.len();
+            let var = VarInt::consensus_decode(&vec[self.cursor..]).unwrap();
+            let start = self.cursor + var.len();
             let end = start + var.0 as usize;
             self.cursor = end;
             Some(&vec[start..end])
@@ -124,12 +146,32 @@ mod test {
     use Transaction;
 
     #[test]
+    fn test_push() {
+        let mut witness = Witness::default();
+        witness.push(&vec![0u8]);
+        let expected = Witness {
+            len: 1,
+            content: vec![1u8,0],
+        };
+        assert_eq!(witness, expected);
+        witness.push(&vec![2u8,3u8]);
+        let expected = Witness {
+            len: 2,
+            content: vec![1u8,0,2,2,3],
+        };
+        assert_eq!(witness, expected);
+    }
+
+    #[test]
     fn test_witness() {
         let w0 = Vec::from_hex("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105").unwrap();
         let w1 = Vec::from_hex("000000").unwrap();
         let witness_vec = vec![w0, w1];
         let witness_serialized: Vec<u8> = serialize(&witness_vec);
-        let witness = Witness(witness_serialized.clone());
+        let witness = Witness {
+            content: witness_serialized[1..].to_vec(),
+            len: 2,
+        };
         for (i,el) in witness.iter().enumerate() {
             assert_eq!(witness_vec[i], el);
         }
@@ -139,7 +181,7 @@ mod test {
 
         assert_eq!(witness_serialized, serialize(&witness));
 
-        assert_eq!(24, std::mem::size_of::<Witness>());
+        assert_eq!(32, std::mem::size_of::<Witness>());
 
         assert_eq!(24, std::mem::size_of::<Option<Vec<u8>>>());
     }
