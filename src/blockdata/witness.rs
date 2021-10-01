@@ -1,9 +1,11 @@
-use consensus::{Decodable, Encodable, WriteExt};
+use consensus::{Decodable, Encodable, WriteExt, serialize};
 use VarInt;
-use std::io::{Read, Write};
+use io::{self, Read, Write};
 use consensus::encode::Error;
+use prelude::*;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]  //TODO manually implement?
 pub struct Witness {
 
     /// contains the witness Vec<Vec<u8>> serialization without the initial varint indicating the
@@ -25,7 +27,7 @@ pub struct WitnessIterator<'a> {
 impl From<Vec<Vec<u8>>>  for Witness {
     fn from(vec: Vec<Vec<u8>>) -> Self {
         let len = vec.len() as u64;
-        let content = crate::consensus::serialize(&vec);
+        let content = serialize(&vec);
         let index = VarInt(len).len();
         Witness {
             len,
@@ -65,12 +67,13 @@ impl Decodable for Witness {
 
 fn resize_if_needed(vec: &mut Vec<u8>, cursor: usize, increment: usize) {
     if cursor + increment > vec.len() {
-        vec.resize(vec.len()*2, 0);
+        let new_len = vec.len() * 2;
+        vec.resize(new_len, 0);
     }
 }
 
 impl Encodable for Witness {
-    fn consensus_encode<W: Write>(&self, mut writer: W) -> Result<usize, std::io::Error> {
+    fn consensus_encode<W: Write>(&self, mut writer: W) -> Result<usize, io::Error> {
         let len = VarInt(self.len);
         len.consensus_encode(&mut writer)?;
         writer.emit_slice(&self.content[..])?;
@@ -103,7 +106,7 @@ impl Witness {
         self.len += 1;
         let el_len = VarInt(el.len() as u64);
         let cursor = self.content.len();
-        self.content.resize(self.content.len() + el_len.len() + el.len(), 0);
+        self.content.resize(cursor + el_len.len() + el.len(), 0);
         let end = cursor + el_len.len();
         el_len.consensus_encode(&mut self.content[cursor..end]).unwrap();
         self.content[end..].copy_from_slice(el);
@@ -141,7 +144,7 @@ impl<'a> Iterator for WitnessIterator<'a> {
 #[cfg(test)]
 mod test {
     use hashes::hex::{FromHex, ToHex};
-    use crate::consensus::{serialize, deserialize};
+    use consensus::{serialize, deserialize};
     use blockdata::witness::Witness;
     use Transaction;
 
@@ -181,9 +184,8 @@ mod test {
 
         assert_eq!(witness_serialized, serialize(&witness));
 
-        assert_eq!(32, std::mem::size_of::<Witness>());
-
-        assert_eq!(24, std::mem::size_of::<Option<Vec<u8>>>());
+        //assert_eq!(32, std::mem::size_of::<Witness>());
+        //assert_eq!(24, std::mem::size_of::<Option<Vec<u8>>>());
     }
 
     #[test]

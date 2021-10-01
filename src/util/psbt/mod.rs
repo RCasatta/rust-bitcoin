@@ -391,7 +391,7 @@ mod tests {
                 },
                 script_sig: hex_script!("160014be18d152a9b012039daf3da7de4f53349eecb985"),
                 sequence: 4294967295,
-                witness: vec![Vec::from_hex("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105").unwrap()],
+                witness: vec![Vec::from_hex("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105").unwrap()].into(),
             }],
             output: vec![
                 TxOut {
@@ -431,7 +431,7 @@ mod tests {
                 unsigned_tx: {
                     let mut unsigned = tx.clone();
                     unsigned.input[0].script_sig = Script::new();
-                    unsigned.input[0].witness = Vec::new();
+                    unsigned.input[0].witness = Witness::default();
                     unsigned
                 },
                 proprietary: proprietary.clone(),
