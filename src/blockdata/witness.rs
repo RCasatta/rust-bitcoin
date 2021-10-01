@@ -66,8 +66,12 @@ impl Decodable for Witness {
 }
 
 fn resize_if_needed(vec: &mut Vec<u8>, cursor: usize, increment: usize) {
-    if cursor + increment > vec.len() {
-        let new_len = vec.len() * 2;
+    let required_len = cursor + increment;
+    if required_len >= vec.len() {
+        let mut new_len = vec.len();
+        while new_len <= required_len {
+            new_len *= 2;
+        }
         vec.resize(new_len, 0);
     }
 }
