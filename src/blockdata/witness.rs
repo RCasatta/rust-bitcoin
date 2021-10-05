@@ -37,7 +37,7 @@ impl Decodable for Witness {
         if witness_elements == 0 {
             Ok(Witness::default())
         } else {
-            let mut cursor = 0;
+            let mut cursor = 0usize;
 
             // this number should be determined as high enough to cover most witness, and low enough
             // to avoid wasting space without reallocating
@@ -47,7 +47,11 @@ impl Decodable for Witness {
                 let element_size_varint = VarInt::consensus_decode(&mut d)?;
                 let element_size_varint_len = element_size_varint.len();
                 let element_size = element_size_varint.0 as usize;
-                let required_len = cursor + element_size + element_size_varint_len;
+                let required_len = cursor
+                    .checked_add(element_size)
+                    .ok_or_else(|| self::Error::OversizedVectorAllocation { requested: usize::MAX , max: MAX_VEC_SIZE })?
+                    .checked_add(element_size_varint_len)
+                    .ok_or_else(|| self::Error::OversizedVectorAllocation { requested: usize::MAX , max: MAX_VEC_SIZE })?;
 
                 if required_len > MAX_VEC_SIZE {
                     return Err(self::Error::OversizedVectorAllocation { requested: required_len , max: MAX_VEC_SIZE })
@@ -234,6 +238,10 @@ mod test {
     #[test]
     fn fuzz_cases() {
         let s = "26ff0000000000c94ce592cf7a4cbb68eb00ce374300000057cd0000000000000026";
+        let bytes = Vec::from_hex(s).unwrap();
+        assert!(deserialize::<Witness>(&bytes).is_err()); // OversizedVectorAllocation
+
+        let s = "24000000ffffffffffffffffffffffff";
         let bytes = Vec::from_hex(s).unwrap();
         assert!(deserialize::<Witness>(&bytes).is_err()); // OversizedVectorAllocation
     }
