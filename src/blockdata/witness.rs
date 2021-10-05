@@ -1,22 +1,17 @@
-use consensus::{Decodable, Encodable, WriteExt, serialize};
-use VarInt;
-use io::{self, Read, Write};
 use consensus::encode::Error;
+use consensus::{serialize, Decodable, Encodable, WriteExt};
+use io::{self, Read, Write};
 use prelude::*;
+use VarInt;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]  //TODO manually implement?
 pub struct Witness {
-
     /// contains the witness Vec<Vec<u8>> serialization without the initial varint indicating the
     /// number of elements (which is stored in len)
     content: Vec<u8>,
 
     /// number of elements in the witness
     len: u64,
-
-    //TODO? consider having the number of witness elements and the len of the content used (both u32),
-    // this would allow to avoid some allocations during push
 }
 
 pub struct WitnessIterator<'a> {
@@ -24,14 +19,14 @@ pub struct WitnessIterator<'a> {
     cursor: usize,
 }
 
-impl From<Vec<Vec<u8>>>  for Witness {
+impl From<Vec<Vec<u8>>> for Witness {
     fn from(vec: Vec<Vec<u8>>) -> Self {
         let len = vec.len() as u64;
         let content = serialize(&vec);
         let index = VarInt(len).len();
         Witness {
             len,
-            content: content[index..].to_vec()
+            content: content[index..].to_vec(),
         }
     }
 }
@@ -52,15 +47,15 @@ impl Decodable for Witness {
             for _ in 0..witness_elements.0 {
                 let element_size = VarInt::consensus_decode(&mut d)?;
                 resize_if_needed(&mut content, cursor, element_size.len());
-                element_size.consensus_encode(&mut content[cursor..cursor+element_size.len()])?;
+                element_size.consensus_encode(&mut content[cursor..cursor + element_size.len()])?;
                 cursor += element_size.len();
                 let element_size = element_size.0 as usize;
                 resize_if_needed(&mut content, cursor, element_size);
-                d.read_exact(&mut content[cursor..cursor+element_size])?;
+                d.read_exact(&mut content[cursor..cursor + element_size])?;
                 cursor += element_size;
             }
             content.truncate(cursor);
-            Ok(Witness {content, len})
+            Ok(Witness { content, len })
         }
     }
 }
@@ -112,7 +107,9 @@ impl Witness {
         let cursor = self.content.len();
         self.content.resize(cursor + el_len.len() + el.len(), 0);
         let end = cursor + el_len.len();
-        el_len.consensus_encode(&mut self.content[cursor..end]).unwrap();
+        el_len
+            .consensus_encode(&mut self.content[cursor..end])
+            .unwrap();
         self.content[end..].copy_from_slice(el);
     }
 }
@@ -129,7 +126,7 @@ impl Default for Witness {
 }
 
 impl<'a> Iterator for WitnessIterator<'a> {
-    type Item = &'a[u8];
+    type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
         let vec = &self.witness.content;
@@ -145,11 +142,33 @@ impl<'a> Iterator for WitnessIterator<'a> {
     }
 }
 
+// Serde keep backward compatibility with old Vec<Vec<u8>> format
+#[cfg(feature = "serde")]
+impl serde::Serialize for Witness {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let vec: Vec<_> = self.iter().map(|e| e.to_vec()).collect();
+        serde::Serialize::serialize(&vec, serializer)
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Witness {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let vec: Vec<Vec<u8>> = serde::Deserialize::deserialize(deserializer)?;
+        Ok(vec.into())
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use hashes::hex::{FromHex, ToHex};
-    use consensus::{serialize, deserialize};
     use blockdata::witness::Witness;
+    use consensus::{deserialize, serialize};
+    use hashes::hex::{FromHex, ToHex};
     use Transaction;
 
     #[test]
@@ -158,20 +177,22 @@ mod test {
         witness.push(&vec![0u8]);
         let expected = Witness {
             len: 1,
-            content: vec![1u8,0],
+            content: vec![1u8, 0],
         };
         assert_eq!(witness, expected);
-        witness.push(&vec![2u8,3u8]);
+        witness.push(&vec![2u8, 3u8]);
         let expected = Witness {
             len: 2,
-            content: vec![1u8,0,2,2,3],
+            content: vec![1u8, 0, 2, 2, 3],
         };
         assert_eq!(witness, expected);
     }
 
     #[test]
     fn test_witness() {
-        let w0 = Vec::from_hex("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105").unwrap();
+        let w0 =
+            Vec::from_hex("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105")
+                .unwrap();
         let w1 = Vec::from_hex("000000").unwrap();
         let witness_vec = vec![w0, w1];
         let witness_serialized: Vec<u8> = serialize(&witness_vec);
@@ -179,7 +200,7 @@ mod test {
             content: witness_serialized[1..].to_vec(),
             len: 2,
         };
-        for (i,el) in witness.iter().enumerate() {
+        for (i, el) in witness.iter().enumerate() {
             assert_eq!(witness_vec[i], el);
         }
 
@@ -199,11 +220,25 @@ mod test {
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
         let expected_wit = ["304502210084622878c94f4c356ce49c8e33a063ec90f6ee9c0208540888cfab056cd1fca9022014e8dbfdfa46d318c6887afd92dcfa54510e057565e091d64d2ee3a66488f82c01", "026e181ffb98ebfe5a64c983073398ea4bcd1548e7b971b4c175346a25a1c12e95"];
-        for (i,wit_el) in tx.input[0].witness.iter().enumerate() {
+        for (i, wit_el) in tx.input[0].witness.iter().enumerate() {
             assert_eq!(expected_wit[i], wit_el.to_hex());
         }
         let tx_bytes_back = serialize(&tx);
         assert_eq!(tx_bytes_back, tx_bytes);
+    }
 
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serde() {
+        let old_witness_format = vec![vec![0u8], vec![2]];
+        let new_witness_format: Witness = old_witness_format.clone().into();
+
+        let old = serde_json::to_string(&old_witness_format).unwrap();
+        let new = serde_json::to_string(&new_witness_format).unwrap();
+
+        assert_eq!(old, new);
+
+        let back = serde_json::from_str(&new).unwrap();
+        assert_eq!(new_witness_format, back);
     }
 }
