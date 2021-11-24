@@ -8,6 +8,9 @@ use consensus::{Decodable, Encodable, WriteExt};
 use io::{self, Read, Write};
 use core::fmt::{Display, Formatter, self};
 use hashes::hex::ToHex;
+use core::str::FromStr;
+use hashes::hex;
+use hashes::hex::{FromHex, ToHex};
 use prelude::*;
 use VarInt;
 
@@ -185,6 +188,23 @@ impl Display for Witness {
             writeln!(f, "{}", item.to_hex())?;
         }
         Ok(())
+    }
+}
+
+impl FromStr for Witness {
+    type Err = hex::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let data = s.split('\n').map(Vec::<u8>::from_hex).collect::<Result<Vec<_>, _>>()?;
+        Ok(Witness::from(data))
+    }
+}
+
+impl ToHex for Witness {
+    fn to_hex(&self) -> String {
+        let mut vec = Vec::with_capacity(self.content.len());
+        self.consensus_encode(&mut vec).expect("witness memory hex encoder");
+        vec.to_hex()
     }
 }
 
