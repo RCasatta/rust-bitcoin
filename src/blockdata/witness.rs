@@ -7,7 +7,7 @@ use consensus::encode::{Error, MAX_VEC_SIZE};
 use consensus::{Decodable, Encodable, WriteExt};
 use io::{self, Read, Write};
 use core::fmt::{Display, Formatter, self};
-use hashes::hex::ToHex;
+use core::ops::Index;
 use core::str::FromStr;
 use hashes::hex;
 use hashes::hex::{FromHex, ToHex};
@@ -180,6 +180,25 @@ impl Witness {
             .expect("writers on vec don't error, space granted through previous resize");
         self.content[end_varint..].copy_from_slice(new_element);
     }
+
+    /// Gets nth element from the witness stack. Does not allocate
+    pub fn get(&self, index: usize) -> Option<&[u8]> {
+        if index >= self.witness_elements as usize {
+            return None // return early without performing unnecessary jumps
+        }
+        let mut p = self.content.as_slice();
+        let mut jump = 0usize;
+        for _ in 0..=index {
+            p = &p[jump..];
+            let varint = VarInt::consensus_decode(p).ok()?;
+            jump = varint.0 as usize;
+            p = &p[varint.len()..];
+            if jump > p.len() {
+                return None
+            }
+        }
+        return Some(&p[..jump])
+    }
 }
 
 impl Display for Witness {
@@ -216,6 +235,14 @@ impl Default for Witness {
             content: Vec::new(),
             witness_elements: 0,
         }
+    }
+}
+
+impl Index<usize> for Witness {
+    type Output = [u8];
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).expect("witness stack index exceeds the number of witness elements")
     }
 }
 
