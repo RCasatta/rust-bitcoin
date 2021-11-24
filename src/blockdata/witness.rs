@@ -9,6 +9,7 @@ use io::{self, Read, Write};
 use core::fmt::{Display, Formatter, self};
 use core::ops::Index;
 use core::str::FromStr;
+use std::iter::FromIterator;
 use hashes::hex;
 use hashes::hex::{FromHex, ToHex};
 use prelude::*;
@@ -262,6 +263,26 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
+impl<'a> IntoIterator for &'a Witness {
+    type Item = &'a [u8];
+    type IntoIter = Iter<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl FromIterator<Vec<u8>> for Witness {
+    fn from_iter<T: IntoIterator<Item=Vec<u8>>>(iter: T) -> Self {
+        let mut witness = Witness::default();
+        for item in iter {
+            witness.push(&item);
+        }
+        witness
+    }
+}
+
 // Serde keep backward compatibility with old Vec<Vec<u8>> format
 #[cfg(feature = "serde")]
 impl serde::Serialize for Witness {
@@ -286,10 +307,22 @@ impl<'de> serde::Deserialize<'de> for Witness {
 
 #[cfg(test)]
 mod test {
-    use blockdata::witness::Witness;
+    use super::*;
     use consensus::{deserialize, serialize};
-    use hashes::hex::{FromHex, ToHex};
     use Transaction;
+
+    #[test]
+    fn test_index() {
+        // we have two-element witness
+        let expected_wit = vec![
+            "304502210084622878c94f4c356ce49c8e33a063ec90f6ee9c0208540888cfab056cd1fca9022014e8dbfdfa46d318c6887afd92dcfa54510e057565e091d64d2ee3a66488f82c01",
+            "026e181ffb98ebfe5a64c983073398ea4bcd1548e7b971b4c175346a25a1c12e95"
+        ];
+        let witness = Witness::from_str(&expected_wit.join("\n")).unwrap();
+        assert_eq!(witness[0].to_hex(), expected_wit[0]);
+        assert_eq!(witness[1].to_hex(), expected_wit[1]);
+        assert_eq!(witness.get(2), None);
+    }
 
     #[test]
     fn test_push() {
