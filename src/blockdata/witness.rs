@@ -6,6 +6,8 @@
 use consensus::encode::{Error, MAX_VEC_SIZE};
 use consensus::{Decodable, Encodable, WriteExt};
 use io::{self, Read, Write};
+use core::fmt::{Display, Formatter, self};
+use hashes::hex::ToHex;
 use prelude::*;
 use VarInt;
 
@@ -174,6 +176,15 @@ impl Witness {
             .consensus_encode(&mut self.content[current_content_len..end_varint])
             .expect("writers on vec don't error, space granted through previous resize");
         self.content[end_varint..].copy_from_slice(new_element);
+    }
+}
+
+impl Display for Witness {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        for item in self.iter() {
+            writeln!(f, "{}", item.to_hex())?;
+        }
+        Ok(())
     }
 }
 
