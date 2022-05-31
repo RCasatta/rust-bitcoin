@@ -315,6 +315,9 @@ pub trait Encodable {
     ///
     /// The only errors returned are errors propagated from the writer.
     fn consensus_encode<W: io::Write>(&self, writer: W) -> Result<usize, io::Error>;
+
+    /// Returns byte used when the object is consensus
+    fn serialized_len(&self) -> usize;
 }
 
 /// Data which can be encoded in a consensus-consistent way
@@ -346,6 +349,8 @@ macro_rules! impl_int_encodable {
                 s.$meth_enc(*self)?;
                 Ok(mem::size_of::<$ty>())
             }
+            fn serialized_len(&self) -> usize { mem::size_of::<$ty>() }
+
         }
     }
 }
@@ -365,12 +370,7 @@ impl VarInt {
     /// and 9 otherwise.
     #[inline]
     pub fn len(&self) -> usize {
-        match self.0 {
-            0..=0xFC             => { 1 }
-            0xFD..=0xFFFF        => { 3 }
-            0x10000..=0xFFFFFFFF => { 5 }
-            _                    => { 9 }
-        }
+        var_int_serialized_len(self.0)
     }
 }
 
@@ -399,6 +399,7 @@ impl Encodable for VarInt {
             },
         }
     }
+    fn serialized_len(&self) -> usize { var_int_serialized_len(self.0) }
 }
 
 impl Decodable for VarInt {
@@ -435,6 +436,19 @@ impl Decodable for VarInt {
     }
 }
 
+pub(crate) fn bytes_serialized_len(bytes: &[u8]) -> usize {
+    var_int_serialized_len(bytes.len() as u64) + bytes.len()
+}
+
+pub(crate) fn var_int_serialized_len(val: u64) -> usize {
+    match val {
+        0..=0xFC             => { 1 }
+        0xFD..=0xFFFF        => { 3 }
+        0x10000..=0xFFFFFFFF => { 5 }
+        _                    => { 9 }
+    }
+}
+
 // Booleans
 impl Encodable for bool {
     #[inline]
@@ -442,6 +456,7 @@ impl Encodable for bool {
         s.emit_bool(*self)?;
         Ok(1)
     }
+    fn serialized_len(&self) -> usize { 1 }
 }
 
 impl Decodable for bool {
@@ -460,6 +475,8 @@ impl Encodable for String {
         s.emit_slice(b)?;
         Ok(vi_len + b.len())
     }
+    fn serialized_len(&self) -> usize { bytes_serialized_len(self.as_bytes()) }
+
 }
 
 impl Decodable for String {
@@ -479,6 +496,8 @@ impl Encodable for Cow<'static, str> {
         s.emit_slice(b)?;
         Ok(vi_len + b.len())
     }
+    fn serialized_len(&self) -> usize { bytes_serialized_len(self.as_bytes()) }
+
 }
 
 impl Decodable for Cow<'static, str> {
@@ -500,6 +519,8 @@ macro_rules! impl_array {
                 s.emit_slice(&self[..])?;
                 Ok(self.len())
             }
+            fn serialized_len(&self) -> usize { self.len() }
+
         }
 
         impl Decodable for [u8; $size] {
@@ -539,6 +560,7 @@ impl Encodable for [u16; 8] {
         for c in self.iter() { c.consensus_encode(&mut s)?; }
         Ok(16)
     }
+    fn serialized_len(&self) -> usize { 16 }
 }
 
 // Vectors
@@ -554,6 +576,10 @@ macro_rules! impl_vec {
                 }
                 Ok(len)
             }
+            fn serialized_len(&self) -> usize { 
+                self.iter().fold(var_int_serialized_len(self.len() as u64), | acc, x | acc + x.serialized_len() )
+            }
+
         }
         impl Decodable for Vec<$type> {
             #[inline]
@@ -602,6 +628,8 @@ impl Encodable for Vec<u8> {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         consensus_encode_with_size(self, s)
     }
+    fn serialized_len(&self) -> usize { bytes_serialized_len(&self[..]) }
+
 }
 
 impl Decodable for Vec<u8> {
@@ -622,6 +650,8 @@ impl Encodable for Box<[u8]> {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         consensus_encode_with_size(self, s)
     }
+    fn serialized_len(&self) -> usize { bytes_serialized_len(self) }
+
 }
 
 impl Decodable for Box<[u8]> {
@@ -645,8 +675,10 @@ impl Encodable for CheckedData {
         (self.0.len() as u32).consensus_encode(&mut s)?;
         sha2_checksum(&self.0).consensus_encode(&mut s)?;
         s.emit_slice(&self.0)?;
-        Ok(8 + self.0.len())
+        Ok(self.serialized_len())
     }
+    fn serialized_len(&self) -> usize { 4 + 4 + self.0.len() }
+
 }
 
 impl Decodable for CheckedData {
@@ -679,24 +711,32 @@ impl<'a, T: Encodable> Encodable for &'a T {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         (&**self).consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { (&**self).serialized_len() }
+
 }
 
 impl<'a, T: Encodable> Encodable for &'a mut T {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         (&**self).consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { (&**self).serialized_len() }
+
 }
 
 impl<T: Encodable> Encodable for rc::Rc<T> {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         (&**self).consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { (&**self).serialized_len() }
+
 }
 
 impl<T: Encodable> Encodable for sync::Arc<T> {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         (&**self).consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { (&**self).serialized_len() }
+
 }
 
 // Tuples
@@ -714,6 +754,14 @@ macro_rules! tuple_encode {
                 $(len += $x.consensus_encode(&mut s)?;)*
                 Ok(len)
             }
+            #[allow(non_snake_case)]
+            fn serialized_len(&self) -> usize {
+                let &($(ref $x),*) = self;
+                let mut len = 0;
+                $(len += $x.serialized_len();)*
+                len
+            }
+
         }
 
         impl<$($x: Decodable),*> Decodable for ($($x),*) {
@@ -738,6 +786,8 @@ impl Encodable for sha256d::Hash {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         self.into_inner().consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { Self::LEN }
+
 }
 
 impl Decodable for sha256d::Hash {
@@ -750,6 +800,8 @@ impl Encodable for sha256::Hash {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         self.into_inner().consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { Self::LEN }
+
 }
 
 impl Decodable for sha256::Hash {
@@ -762,6 +814,8 @@ impl Encodable for TapLeafHash {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         self.into_inner().consensus_encode(s)
     }
+    fn serialized_len(&self) -> usize { Self::LEN }
+
 }
 
 impl Decodable for TapLeafHash {
