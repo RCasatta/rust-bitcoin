@@ -1,7 +1,9 @@
 extern crate bitcoin;
+extern crate arbitrary;
 
 use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::blockdata::witness::Witness;
+use arbitrary::Arbitrary;
 
 fn do_test(data: &[u8]) {
     let w: Result<Witness, _> = deserialize(data);
@@ -9,6 +11,14 @@ fn do_test(data: &[u8]) {
         let serialized = serialize(&witness);
         assert_eq!(data, serialized);
     }
+
+    let mut unstructured = arbitrary::Unstructured::new(data);
+    if let Ok(witness) = Witness::arbitrary(&mut unstructured) {
+        let serialized = serialize(&witness);
+        let back: Witness = deserialize(&serialized).unwrap();
+        assert_eq!(back, witness);
+    }
+
 }
 
 #[cfg(feature = "afl")]

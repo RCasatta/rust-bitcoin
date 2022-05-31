@@ -21,6 +21,9 @@ rand = ["secp256k1/rand-std"]
 use-serde = ["serde", "bitcoin_hashes/serde", "secp256k1/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
+honggfuzz = ["arbitrary"]
+afl = ["arbitrary"]
+
 
 # At least one of std, no-std must be enabled.
 #
@@ -44,6 +47,8 @@ base64-compat = { version = "1.0.0", optional = true }
 bitcoinconsensus = { version = "0.19.0-3", optional = true }
 serde = { version = "1", default-features = false, features = [ "derive", "alloc" ], optional = true }
 hashbrown = { version = "0.8", optional = true }
+arbitrary= { version = "*", optional = true }
+
 
 [dev-dependencies]
 serde_json = "<1.0.45"

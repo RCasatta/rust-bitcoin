@@ -300,6 +300,15 @@ impl<'de> serde::Deserialize<'de> for Witness {
     }
 }
 
+//#[cfg(any(feature = "hongfuzz", feature="afl"))]
+impl<'a> arbitrary::Arbitrary<'a> for Witness {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let vec: Vec<Vec<u8>> = arbitrary::Arbitrary::arbitrary(u)?;
+        Ok(Witness::from_vec(vec))
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use super::*;

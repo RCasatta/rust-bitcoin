@@ -15,6 +15,7 @@ honggfuzz_fuzz = ["honggfuzz"]
 honggfuzz = { version = "0.5", optional = true }
 afl = { version = "0.4", optional = true }
 bitcoin = { path = ".." }
+arbitrary = "*"
 
 # Prevent this from interfering with workspaces
 [workspace]
