@@ -639,9 +639,7 @@ impl Encodable for TxIn {
         Ok(len)
     }
     fn serialized_len(&self) -> usize {
-        self.previous_output.serialized_len()
-        + self.script_sig.serialized_len()
-        + self.sequence.serialized_len()
+        40 + self.script_sig.serialized_len()
      }
 }
 impl Decodable for TxIn {
@@ -684,10 +682,7 @@ impl Encodable for Transaction {
         Ok(len)
     }
     fn serialized_len(&self) -> usize {
-        let mut len = 0;
-        len += self.version.serialized_len();
-        // To avoid serialization ambiguity, no inputs means we use BIP141 serialization (see
-        // `Transaction` docs for full explanation).
+        let mut len = 4 + 4;
         let mut have_witness = self.input.is_empty();
         for input in &self.input {
             if !input.witness.is_empty() {
@@ -695,19 +690,15 @@ impl Encodable for Transaction {
                 break;
             }
         }
-        if !have_witness {
-            len += self.input.serialized_len();
-            len += self.output.serialized_len();
-        } else {
-            len += 0u8.serialized_len();
-            len += 1u8.serialized_len();
-            len += self.input.serialized_len();
-            len += self.output.serialized_len();
+        len += self.input.serialized_len();
+        len += self.output.serialized_len();
+
+        if have_witness {
+            len += 2;
             for input in &self.input {
                 len += input.witness.serialized_len();
             }
         }
-        len += self.lock_time.serialized_len();
         len
      }
 }
@@ -1682,6 +1673,17 @@ mod benches {
 
         bh.iter(|| {
             let result = serialize(&tx);
+            black_box(&result);
+        });
+    }
+
+    #[bench]
+    pub fn bench_transaction_serialized_len(bh: &mut Bencher) {
+        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
+        let tx: Transaction = deserialize(&raw_tx).unwrap();
+
+        bh.iter(|| {
+            let result = tx.serialized_len();
             black_box(&result);
         });
     }
