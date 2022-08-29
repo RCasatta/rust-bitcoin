@@ -130,7 +130,7 @@ impl From<psbt::Error> for Error {
 
 /// Encode an object into a vector
 pub fn serialize<T: Encodable + ?Sized>(data: &T) -> Vec<u8> {
-    let mut encoder = Vec::new();
+    let mut encoder = Vec::with_capacity(data.serialized_len_hint().len().max(4));
     let len = data.consensus_encode(&mut encoder).expect("in-memory writers don't error");
     debug_assert_eq!(len, encoder.len());
     encoder
@@ -306,6 +306,26 @@ pub trait Encodable {
     ///
     /// The only errors returned are errors propagated from the writer.
     fn consensus_encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error>;
+
+    /// Fastly returns an hint of the bytes length needed when `self` is consensus encoded.
+    ///
+    /// For static objects (eg [`BlockHeader`]) the value is exact and thus it would return a
+    /// `SerializedLen::Exact` variant
+    ///
+    /// For objects where the size is known only at run-time (eg [`Script`]) the value is a minimum 
+    /// bound and thus it would return a `SerializedLen::Min` variant
+    ///
+    fn serialized_len_hint(&self) -> crate::SerializedLen {
+        Self::SERIALIZED_LEN_HINT_SINGLE
+    }
+
+    /// If `Self` is `Vec` this is the serialized hint len of one inner element 
+    /// if `Self` contains field that are `Vec` this size is considering those Vecs empty
+    /// 
+    /// The blanket implementation allows to gradually implement the feature over consensus objects
+    /// but it should be a pure abstract function in the long term. Note this implementation isn't
+    /// wrong such is granted that every object serialized size is at least 1 byte.
+    const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Min(1);
 }
 
 /// Data which can be encoded in a consensus-consistent way
@@ -389,6 +409,9 @@ macro_rules! impl_int_encodable {
                 w.$meth_enc(*self)?;
                 Ok(mem::size_of::<$ty>())
             }
+
+            const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Exact(mem::size_of::<$ty>());
+
         }
     }
 }
@@ -544,6 +567,9 @@ macro_rules! impl_array {
                 w.emit_slice(&self[..])?;
                 Ok(self.len())
             }
+
+            const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Exact($size);
+
         }
 
         impl Decodable for [u8; $size] {
@@ -598,6 +624,11 @@ macro_rules! impl_vec {
                     len += c.consensus_encode(w)?;
                 }
                 Ok(len)
+            }
+
+            fn serialized_len_hint(&self) -> $crate::SerializedLen {
+                $crate::SerializedLen::Exact(VarInt(self.len() as u64).len()) +
+                $crate::SerializedLen::Exact(self.len()) * <$type>::SERIALIZED_LEN_HINT_SINGLE
             }
         }
 
@@ -678,6 +709,10 @@ impl Encodable for Vec<u8> {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         consensus_encode_with_size(self, w)
     }
+
+    fn serialized_len_hint(&self) -> crate::SerializedLen {
+        crate::SerializedLen::for_byte_vec(&self)
+    }
 }
 
 impl Decodable for Vec<u8> {
@@ -693,6 +728,10 @@ impl Encodable for Box<[u8]> {
     #[inline]
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         consensus_encode_with_size(self, w)
+    }
+
+    fn serialized_len_hint(&self) -> crate::SerializedLen {
+        crate::SerializedLen::for_byte_vec(&self)
     }
 }
 
@@ -779,6 +818,15 @@ macro_rules! tuple_encode {
                 let mut len = 0;
                 $(len += $x.consensus_encode(w)?;)*
                 Ok(len)
+            }
+
+            #[inline]
+            #[allow(non_snake_case)]
+            fn serialized_len_hint(&self,) -> $crate::SerializedLen {
+                let &($(ref $x),*) = self;
+                let mut len = $crate::SerializedLen::Exact(0);
+                $(len += $x.serialized_len_hint();)*
+                len
             }
         }
 

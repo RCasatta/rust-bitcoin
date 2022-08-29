@@ -8,6 +8,10 @@
 
 macro_rules! impl_consensus_encoding {
     ($thing:ident, $($field:ident),+) => (
+        impl_consensus_encoding!($thing, crate::SerializedLen::Min(1), $($field),+);
+    );
+
+    ($thing:ident, $s:expr, $($field:ident),+) => (
         impl $crate::consensus::Encodable for $thing {
             #[inline]
             fn consensus_encode<R: $crate::io::Write + ?Sized>(
@@ -17,6 +21,15 @@ macro_rules! impl_consensus_encoding {
                 let mut len = 0;
                 $(len += self.$field.consensus_encode(r)?;)+
                 Ok(len)
+            }
+
+            const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = $s;
+
+            #[inline]
+            fn serialized_len_hint(&self,) -> $crate::SerializedLen {
+                let mut len = $crate::SerializedLen::Exact(0);
+                $(len += self.$field.serialized_len_hint();)+
+                len
             }
         }
 

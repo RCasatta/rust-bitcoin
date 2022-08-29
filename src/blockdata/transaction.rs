@@ -893,13 +893,15 @@ impl Transaction {
     }
 }
 
-impl_consensus_encoding!(TxOut, value, script_pubkey);
+impl_consensus_encoding!(TxOut, crate::SerializedLen::Min(9), value, script_pubkey);
 
 impl Encodable for OutPoint {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let len = self.txid.consensus_encode(w)?;
         Ok(len + self.vout.consensus_encode(w)?)
     }
+
+    const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Exact(32 + 4);
 }
 impl Decodable for OutPoint {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
@@ -918,6 +920,8 @@ impl Encodable for TxIn {
         len += self.sequence.consensus_encode(w)?;
         Ok(len)
     }
+    const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Min(36 + 1 + 4);
+
 }
 impl Decodable for TxIn {
     #[inline]
@@ -935,6 +939,9 @@ impl Encodable for Sequence {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.0.consensus_encode(w)
     }
+
+    const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Exact(4);
+
 }
 
 impl Decodable for Sequence {
@@ -970,6 +977,16 @@ impl Encodable for Transaction {
         }
         len += self.lock_time.consensus_encode(w)?;
         Ok(len)
+    }
+
+    const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Min(12);
+
+    fn serialized_len_hint(&self,) -> crate::SerializedLen {
+        crate::SerializedLen::Min(0) + // otherwise empty Tx would return Exact(10) but the size is 12 due to the witness markers
+        self.version.serialized_len_hint() +
+        self.lock_time.serialized_len_hint() +
+        self.input.serialized_len_hint() +
+        self.output.serialized_len_hint()
     }
 }
 
@@ -1437,8 +1454,8 @@ mod tests {
 #[cfg(bench)]
 mod benches {
     use super::Transaction;
-    use crate::EmptyWrite;
-    use crate::consensus::{deserialize, Encodable};
+    use crate::{EmptyWrite, OutPoint};
+    use crate::consensus::{deserialize, Encodable, serialize};
     use crate::hashes::hex::FromHex;
     use test::{black_box, Bencher};
 
@@ -1456,7 +1473,7 @@ mod benches {
     }
 
     #[bench]
-    pub fn bench_transaction_serialize(bh: &mut Bencher) {
+    pub fn bench_transaction_serialize_workhorse(bh: &mut Bencher) {
         let raw_tx = Vec::from_hex(SOME_TX).unwrap();
         let tx: Transaction = deserialize(&raw_tx).unwrap();
 
@@ -1466,6 +1483,53 @@ mod benches {
             let result = tx.consensus_encode(&mut data);
             black_box(&result);
             data.clear();
+        });
+    }
+
+    #[bench]
+    pub fn bench_transaction_serialize_alloc(bh: &mut Bencher) {
+        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
+        let tx: Transaction = deserialize(&raw_tx).unwrap();
+        bh.iter(|| {
+            let mut data = vec![];
+            let result = tx.consensus_encode(&mut data);
+
+            black_box(result).unwrap();
+            black_box(data);
+        });
+    }
+
+    #[bench]
+    pub fn bench_outpoint_serialize_alloc(bh: &mut Bencher) {
+        let out_point = OutPoint::default();
+        bh.iter(|| {
+            let mut data = vec![];
+            let result = out_point.consensus_encode(&mut data);
+
+            black_box(result).unwrap();
+            black_box(data);
+        });
+    }
+    #[bench]
+    pub fn bench_outpoint_serialize(bh: &mut Bencher) {
+        let out_point = OutPoint::default();
+        bh.iter(|| {
+            let result = serialize(&out_point);
+
+            black_box(result);
+        });
+    }
+    #[bench]
+    pub fn bench_transaction_serialize(bh: &mut Bencher) {
+        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
+        let tx: Transaction = deserialize(&raw_tx).unwrap();
+        assert_eq!(tx.serialized_len_hint().len(),60);
+
+        bh.iter(|| {
+            let result = serialize(&tx);
+            assert_eq!(result.len(),193);
+            assert_eq!(result.capacity(),300);
+            black_box(result);
         });
     }
 

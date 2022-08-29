@@ -87,6 +87,8 @@ impl Encodable for PackedLockTime {
     fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.0.consensus_encode(w)
     }
+
+    const SERIALIZED_LEN_HINT_SINGLE: crate::SerializedLen = crate::SerializedLen::Exact(4);
 }
 
 impl Decodable for PackedLockTime {

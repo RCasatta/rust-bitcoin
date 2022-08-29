@@ -1079,6 +1079,10 @@ impl Encodable for Script {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.0.consensus_encode(w)
     }
+
+    fn serialized_len_hint(&self) -> crate::SerializedLen {
+        self.0.serialized_len_hint()
+    }
 }
 
 impl Decodable for Script {

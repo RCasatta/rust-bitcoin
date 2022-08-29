@@ -122,6 +122,10 @@ impl Encodable for Witness {
         w.emit_slice(&self.content[..])?;
         Ok(self.content.len() + len.len())
     }
+    fn serialized_len_hint(&self) -> crate::SerializedLen {
+        let len = VarInt(self.witness_elements as u64);
+        crate::SerializedLen::Exact(len.len() + self.content.len())
+    }
 }
 
 impl Witness {

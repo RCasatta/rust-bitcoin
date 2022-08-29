@@ -42,4 +42,4 @@ pub struct BlockTxn {
     /// The requested block transactions.
     pub transactions: bip152::BlockTransactions,
 }
-impl_consensus_encoding!(BlockTxn, transactions);
+impl_consensus_encoding!(BlockTxn, crate::SerializedLen::Min(1), transactions);

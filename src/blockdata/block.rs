@@ -61,7 +61,7 @@ pub struct BlockHeader {
     pub nonce: u32,
 }
 
-impl_consensus_encoding!(BlockHeader, version, prev_blockhash, merkle_root, time, bits, nonce);
+impl_consensus_encoding!(BlockHeader, crate::SerializedLen::Exact(80), version, prev_blockhash, merkle_root, time, bits, nonce);
 
 impl BlockHeader {
     /// Returns the block hash.
@@ -180,7 +180,7 @@ pub struct Block {
     pub txdata: Vec<Transaction>
 }
 
-impl_consensus_encoding!(Block, header, txdata);
+impl_consensus_encoding!(Block, crate::SerializedLen::Min(81), header, txdata);
 
 impl Block {
     /// Returns the block hash.
