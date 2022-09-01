@@ -8,6 +8,10 @@
 
 macro_rules! impl_consensus_encoding {
     ($thing:ident, $($field:ident),+) => (
+        impl_consensus_encoding!($thing, None::<core::num::NonZeroUsize>, $($field),+);
+    );
+
+    ($thing:ident, $static:expr, $($field:ident),+) => (
         impl $crate::consensus::Encodable for $thing {
             #[inline]
             fn consensus_encode<R: $crate::io::Write + ?Sized>(
@@ -18,6 +22,7 @@ macro_rules! impl_consensus_encoding {
                 $(len += self.$field.consensus_encode(r)?;)+
                 Ok(len)
             }
+            const STATIC_SERIALIZED_LEN: Option<core::num::NonZeroUsize> = $static;
         }
 
         impl $crate::consensus::Decodable for $thing {
