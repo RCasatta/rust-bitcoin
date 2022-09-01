@@ -632,6 +632,18 @@ macro_rules! impl_vec {
                 }
                 Ok(len)
             }
+            fn serialized_len(&self) -> usize {
+                match <$type>::STATIC_SERIALIZED_LEN {
+                    Some(len) => VarInt(self.len() as u64).serialized_len() + len.get() * self.len(),
+                    None => Encodable::serialized_len(&self),
+                }
+            }
+            fn serialized_len_early_stop(&self, threshold: usize) -> Result<usize, usize> {
+                match <$type>::STATIC_SERIALIZED_LEN {
+                    Some(_) => Ok(self.serialized_len()),
+                    None => Encodable::serialized_len_early_stop(&self, threshold),
+                }
+            }
         }
 
         impl Decodable for Vec<$type> {
