@@ -15,6 +15,7 @@
 use crate::prelude::*;
 
 use crate::io;
+use core::num::NonZeroUsize;
 use core::{fmt, str, default::Default};
 use core::convert::TryFrom;
 
@@ -900,6 +901,7 @@ impl Encodable for OutPoint {
         let len = self.txid.consensus_encode(w)?;
         Ok(len + self.vout.consensus_encode(w)?)
     }
+    const STATIC_SERIALIZED_LEN: Option<NonZeroUsize> = NonZeroUsize::new(32 + 4); // txid(32) + vout(4)
 }
 impl Decodable for OutPoint {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
