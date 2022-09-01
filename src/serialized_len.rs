@@ -31,6 +31,9 @@ impl io::Write for WriteCounterThreshold {
 
 #[cfg(test)]
 mod test {
+    use bitcoin_hashes::Hash;
+
+    use crate::BlockHash;
     use crate::consensus::{serialize, Encodable};
     use crate::constants::genesis_block;
 
@@ -43,6 +46,17 @@ mod test {
         let ser_stop = tx.serialized_len_early_stop(20);
         assert!(ser_stop.is_err());
         assert!(ser_stop.unwrap_err() > 20);
+
+        assert_eq!(Ok(8), 0u64.serialized_len_early_stop(1), "STATIC_SERIALIZED_LEN is None for int type");
+    }
+
+
+    #[test]
+    fn test_serialized_len_vec() {
+        let hashes = vec![BlockHash::all_zeros(); 10];
+        assert_eq!(serialize(&hashes).len(), 321);
+        assert_eq!(hashes.serialized_len(), 321);
+        assert_eq!(hashes.serialized_len_early_stop(1), Ok(321));
     }
 }
 
