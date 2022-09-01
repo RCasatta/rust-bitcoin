@@ -421,6 +421,7 @@ macro_rules! impl_int_encodable {
                 w.$meth_enc(*self)?;
                 Ok(mem::size_of::<$ty>())
             }
+            const STATIC_SERIALIZED_LEN: Option<NonZeroUsize> = NonZeroUsize::new(mem::size_of::<$ty>());
         }
     }
 }
