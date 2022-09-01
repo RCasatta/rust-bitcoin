@@ -796,11 +796,23 @@ impl<'a, T: Encodable> Encodable for &'a T {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         (&**self).consensus_encode(w)
     }
+    fn serialized_len(&self) -> usize {
+        (&**self).serialized_len()
+    }
+    fn serialized_len_early_stop(&self, threshold: usize) -> Result<usize, usize> {
+        (&**self).serialized_len_early_stop(threshold)
+    }
 }
 
 impl<'a, T: Encodable> Encodable for &'a mut T {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         (&**self).consensus_encode(w)
+    }
+    fn serialized_len(&self) -> usize {
+        (&**self).serialized_len()
+    }
+    fn serialized_len_early_stop(&self, threshold: usize) -> Result<usize, usize> {
+        (&**self).serialized_len_early_stop(threshold)
     }
 }
 
@@ -808,11 +820,23 @@ impl<T: Encodable> Encodable for rc::Rc<T> {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         (&**self).consensus_encode(w)
     }
+    fn serialized_len(&self) -> usize {
+        (&**self).serialized_len()
+    }
+    fn serialized_len_early_stop(&self, threshold: usize) -> Result<usize, usize> {
+        (&**self).serialized_len_early_stop(threshold)
+    }
 }
 
 impl<T: Encodable> Encodable for sync::Arc<T> {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         (&**self).consensus_encode(w)
+    }
+    fn serialized_len(&self) -> usize {
+        (&**self).serialized_len()
+    }
+    fn serialized_len_early_stop(&self, threshold: usize) -> Result<usize, usize> {
+        (&**self).serialized_len_early_stop(threshold)
     }
 }
 
