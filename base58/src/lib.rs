@@ -174,12 +174,15 @@ where
 
         for ch in ret.iter_mut() {
             let new_ch = *ch as usize * 256 + carry;
-            *ch = (new_ch % 58) as u8;
-            carry = new_ch / 58;
+            let (div, rem) = div_rem(new_ch, 58);
+            *ch = rem as u8;
+            carry = div;
         }
         while carry > 0 {
-            ret.push((carry % 58) as u8);
-            carry /= 58;
+            let (div, rem) = div_rem(carry, 58);
+
+            ret.push(rem as u8);
+            carry = div;
         }
     }
 
@@ -193,6 +196,12 @@ where
     }
 
     Ok(())
+}
+
+fn div_rem(a: usize, b: usize) -> (usize, usize) {
+    let div = a / b;
+    let rem = a % b;
+    (div, rem)
 }
 
 #[cfg(test)]
