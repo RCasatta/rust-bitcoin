@@ -118,7 +118,9 @@ pub fn decode_check(data: &str) -> Result<Vec<u8>, Error> {
 }
 
 /// Encodes `data` as a base58 string (see also `base58::encode_check()`).
-pub fn encode(data: &[u8]) -> String { encode_iter(data.iter().cloned()) }
+pub fn encode(data: &[u8]) -> String {
+    encode_iter(data.iter().cloned())
+}
 
 /// Encodes `data` as a base58 string including the checksum.
 ///
@@ -191,12 +193,14 @@ where
 /// will be allocated on the heap.
 struct SmallVec<T> {
     len: usize,
-    stack: [T; 100],
+    stack: [T; 128],
     heap: Vec<T>,
 }
 
 impl<T: Default + Copy> SmallVec<T> {
-    fn new() -> SmallVec<T> { SmallVec { len: 0, stack: [T::default(); 100], heap: Vec::new() } }
+    fn new() -> SmallVec<T> {
+        SmallVec { len: 0, stack: [T::default(); 128], heap: Vec::new() }
+    }
 
     fn push(&mut self, val: T) {
         if self.len < 100 {
@@ -288,7 +292,6 @@ mod tests {
     }
 }
 
-
 #[cfg(bench)]
 mod benches {
     use test::{black_box, Bencher};
@@ -312,5 +315,4 @@ mod benches {
             black_box(&r);
         });
     }
-
 }
